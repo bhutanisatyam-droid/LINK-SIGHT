@@ -123,6 +123,9 @@ class SimulatorFrameSource(BaseFrameSource):
         self.initial_pos_mode = initial_pos_mode
         self.custom_initial_x = custom_initial_x
         self.custom_initial_y = custom_initial_y
+        # RF Link simulation
+        self.rf_link_active: bool = False
+        self.rf_uncertainty_px: float = 80.0  # Gaussian sigma in scene pixels
 
         # Angular scale: pixels per degree — dynamically computed from FOV
         self._recompute_fov_scaling()
@@ -172,8 +175,6 @@ class SimulatorFrameSource(BaseFrameSource):
 
     def reset(self) -> None:
         """Reset kinematics, gimbal pointing, and target trajectory."""
-        self.pan_deg = 0.0
-        self.tilt_deg = 0.0
         self.sim_time = 0.0
         self.trail.clear()
         self.last_update_time = time.perf_counter()
@@ -188,11 +189,13 @@ class SimulatorFrameSource(BaseFrameSource):
             spawn_x = float(np.clip(self.custom_initial_x, 50.0, self.scene_w - 50.0))
             spawn_y = float(np.clip(self.custom_initial_y, 50.0, self.scene_h - 50.0))
 
+        self.orbit_center_x = spawn_x
+        self.orbit_center_y = spawn_y
+
         if self.motion_model == MotionModel.CIRCULAR:
-            # For circular orbit, the random spawn becomes the orbit centre offset
             r = 220.0
-            self.target_x = spawn_x + r if self.initial_pos_mode == "random" else spawn_x + r
-            self.target_y = spawn_y if self.initial_pos_mode == "random" else spawn_y
+            self.target_x = spawn_x + r
+            self.target_y = spawn_y
         elif self.motion_model == MotionModel.STRAIGHT:
             self.target_x = spawn_x
             self.target_y = spawn_y
@@ -208,6 +211,34 @@ class SimulatorFrameSource(BaseFrameSource):
 
         self.prev_target_x = self.target_x
         self.prev_target_y = self.target_y
+
+        # --- RF LINK SIMULATION ---
+        # 'custom' + RF ON:  gimbal pre-slews to approx coords (GPS/INS error modelled as Gaussian noise)
+        # 'custom' + RF OFF: gimbal pre-slews exactly (ideal bench test)
+        # 'random':          gimbal stays at boresight centre, must blind-search
+        if self.initial_pos_mode == "custom":
+            scene_cx = self.scene_w / 2.0
+            scene_cy = self.scene_h / 2.0
+            if self.rf_link_active:
+                # Apply GPS/INS pointing error: Gaussian noise on the pre-slew
+                noise_x = float(np.random.normal(0.0, self.rf_uncertainty_px))
+                noise_y = float(np.random.normal(0.0, self.rf_uncertainty_px))
+                rf_pan_deg = (self.target_x + noise_x - scene_cx) / self.px_per_deg_x
+                rf_tilt_deg = (self.target_y + noise_y - scene_cy) / self.px_per_deg_y
+            else:
+                rf_pan_deg = (self.target_x - scene_cx) / self.px_per_deg_x
+                rf_tilt_deg = (self.target_y - scene_cy) / self.px_per_deg_y
+            self.pan_deg = max(self.min_pan_deg, min(self.max_pan_deg, rf_pan_deg))
+            self.tilt_deg = max(self.min_tilt_deg, min(self.max_tilt_deg, rf_tilt_deg))
+        else:
+            self.pan_deg = 0.0
+            self.tilt_deg = 0.0
+
+
+    def set_rf_link(self, active: bool, uncertainty_px: float) -> None:
+        """Configure RF side-link simulation (active flag + Gaussian pointing error)."""
+        self.rf_link_active = active
+        self.rf_uncertainty_px = max(10.0, min(300.0, uncertainty_px))
 
     def set_motion_model(self, model: MotionModel) -> None:
         """Dynamically update beacon motion model."""
@@ -272,10 +303,11 @@ class SimulatorFrameSource(BaseFrameSource):
     def update_physics(self, dt: float) -> None:
         """Step beacon position forward in time according to active motion model."""
         self.sim_time += dt
-        cx, cy = self.scene_w / 2.0, self.scene_h / 2.0
+        cx = getattr(self, 'orbit_center_x', self.scene_w / 2.0)
+        cy = getattr(self, 'orbit_center_y', self.scene_h / 2.0)
 
         if self.motion_model == MotionModel.CIRCULAR:
-            # Orbital beacon trajectory
+            # Orbital beacon trajectory centered at spawn position
             radius = 220.0 # pixels
             angular_velocity = 0.22 # rad/s (~28s full orbit)
             theta = angular_velocity * self.sim_time
@@ -296,7 +328,7 @@ class SimulatorFrameSource(BaseFrameSource):
                 self.target_y = max(margin, min(self.scene_h - margin, self.target_y))
 
         elif self.motion_model == MotionModel.FIGURE_8:
-            # Lemniscate of Gerono
+            # Lemniscate of Gerono centered at spawn position
             scale_x = 380.0
             scale_y = 260.0
             omega = 0.30

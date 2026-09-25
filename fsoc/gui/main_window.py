@@ -218,6 +218,7 @@ class MainWindow(QMainWindow):
         self.control_panel.initial_pos_changed.connect(self.worker.request_initial_position)
         self.control_panel.pan_speed_changed.connect(self.worker.request_pan_speed)
         self.control_panel.tilt_speed_changed.connect(self.worker.request_tilt_speed)
+        self.control_panel.rf_link_changed.connect(self.worker.request_rf_link)
 
         # Benchmark-2 Video source loading
         self.control_panel.video_file_selected.connect(self.worker.request_load_video)

@@ -292,7 +292,7 @@ class KalmanBeaconTracker(BaseTracker):
         elif self.status == TrackStatus.LOST:
             self.ai_gru_active = False
             # Immediate sub-second re-lock upon verified optical detection
-            if has_detection and detection.confidence >= 0.65:
+            if has_detection and detection.confidence >= 0.40:
                 cx, cy = detection.centroid
                 self.x = np.array([[cx], [cy], [0.0], [0.0]], dtype=np.float64)
                 self.P = np.diag([15.0, 15.0, 10000.0, 10000.0]).astype(np.float64)

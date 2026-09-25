@@ -1,13 +1,13 @@
 """Left-side Control Panel widget for FSOC coarse-pointing system.
 
-Provides telemetry control inputs:
-- Mission execution controls (Run / Pause / Reset)
-- Motion model selector (Circular, Straight, Figure-8, Random)
-- Disturbance injection toggles and intensity sliders (Salt-and-Pepper, Gaussian, Poisson, Jitter, Platform Drift)
-- Atmospheric condition selector (Clear, Haze, Fog, Rain, Low-Light)
-- Physical optical parameters (Beacon size, Max PTZ speed)
-- Visually distinct Benchmark-2 video file loader section
-- Session log export (CSV / JSON)
+Compact mission control dashboard — all sections fit without excessive scrolling.
+Provides:
+- Mission execution controls (Run / Pause / Reset / Beam Break)
+- ISRO System Parameters (FOV, Shape, Trajectory, Init Pos, RF Link, Speeds)
+- Atmospheric condition selector
+- Disturbance injection toggles + sliders
+- Benchmark-2 video file loader
+- Session log export
 """
 
 import datetime
@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -34,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from fsoc.disturbance import AtmosphericCondition, DisturbanceConfig, JitterMode
-from fsoc.frame_source import MotionModel
+from fsoc.frame_source import MotionModel, TargetShape
 from fsoc.gui.theme import (
     COLOR_BORDER,
     COLOR_BORDER_LIGHT,
@@ -53,35 +52,66 @@ from fsoc.gui.theme import (
 )
 
 
-class ControlPanelWidget(QWidget):
-    """Dense mission control dashboard input panel."""
+# ── helpers ──────────────────────────────────────────────────────────────────
 
-    # Control Signals
-    motion_model_changed = Signal(object)   # MotionModel
-    target_size_changed = Signal(int)
-    ptz_speed_changed = Signal(float)
-    fov_changed = Signal(float, float)      # (pan_deg, tilt_deg)  — ISRO #4
-    target_shape_changed = Signal(object)   # TargetShape           — ISRO #9
-    initial_pos_changed = Signal(str, float, float)  # (mode, x, y) — ISRO #11
-    pan_speed_changed = Signal(float)       # ISRO #13
-    tilt_speed_changed = Signal(float)      # ISRO #14
-    run_clicked = Signal()
-    pause_clicked = Signal()
-    reset_clicked = Signal()
-    occlude_clicked = Signal()
-    video_file_selected = Signal(str)
+def _inline_row(label_text: str, widget: QWidget, label_w: int = 72) -> QHBoxLayout:
+    """Return an HBoxLayout with a fixed-width label + widget on the same line."""
+    row = QHBoxLayout()
+    row.setSpacing(4)
+    row.setContentsMargins(0, 0, 0, 0)
+    lbl = QLabel(label_text)
+    lbl.setFont(get_label_font(size_pt=8))
+    lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
+    lbl.setFixedWidth(label_w)
+    row.addWidget(lbl)
+    row.addWidget(widget, 1)
+    return row
+
+
+def _section(title: str) -> tuple[QFrame, QVBoxLayout]:
+    """Return a styled section frame + its inner layout."""
+    frame = QFrame()
+    frame.setObjectName("SectionFrame")
+    lay = QVBoxLayout(frame)
+    lay.setContentsMargins(5, 4, 5, 4)
+    lay.setSpacing(3)
+    hdr = QLabel(title)
+    hdr.setObjectName("SectionHeader")
+    lay.addWidget(hdr)
+    return frame, lay
+
+
+# ── widget ────────────────────────────────────────────────────────────────────
+
+class ControlPanelWidget(QWidget):
+    """Compact mission control dashboard input panel."""
+
+    # Signals
+    motion_model_changed  = Signal(object)          # MotionModel
+    target_size_changed   = Signal(int)
+    ptz_speed_changed     = Signal(float)
+    fov_changed           = Signal(float, float)    # (pan_deg, tilt_deg)
+    target_shape_changed  = Signal(object)          # TargetShape
+    initial_pos_changed   = Signal(str, float, float)  # (mode, x, y)
+    pan_speed_changed     = Signal(float)
+    tilt_speed_changed    = Signal(float)
+    rf_link_changed       = Signal(bool, float)     # (active, uncertainty_px)
+    run_clicked           = Signal()
+    pause_clicked         = Signal()
+    reset_clicked         = Signal()
+    occlude_clicked       = Signal()
+    video_file_selected   = Signal(str)
     switch_to_sim_clicked = Signal()
-    export_logs_clicked = Signal()
+    export_logs_clicked   = Signal()
 
     def __init__(self, disturbance_config: DisturbanceConfig, parent=None):
         super().__init__(parent)
         self.config = disturbance_config
-        self.setFixedWidth(310)
+        self.setFixedWidth(320)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Scroll area for dense parameters
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -89,33 +119,28 @@ class ControlPanelWidget(QWidget):
 
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(10)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
 
-        # --- SECTION 1: EXECUTION CONTROLS ---
-        exec_frame = QFrame()
-        exec_frame.setObjectName("SectionFrame")
-        exec_layout = QVBoxLayout(exec_frame)
-        exec_layout.setContentsMargins(6, 6, 6, 6)
-        exec_layout.setSpacing(6)
-
-        hdr_exec = QLabel("MISSION EXECUTION")
-        hdr_exec.setObjectName("SectionHeader")
-        exec_layout.addWidget(hdr_exec)
+        # ── SECTION 1: MISSION EXECUTION ─────────────────────────────────────
+        exec_frame, exec_layout = _section("MISSION EXECUTION")
 
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(4)
+        btn_row.setSpacing(3)
 
         self.btn_run = QPushButton("RUN")
         self.btn_run.setObjectName("BtnRun")
+        self.btn_run.setFixedHeight(24)
         self.btn_run.clicked.connect(self.run_clicked.emit)
 
         self.btn_pause = QPushButton("PAUSE")
         self.btn_pause.setObjectName("BtnPause")
+        self.btn_pause.setFixedHeight(24)
         self.btn_pause.clicked.connect(self.pause_clicked.emit)
 
         self.btn_reset = QPushButton("RESET")
         self.btn_reset.setObjectName("BtnReset")
+        self.btn_reset.setFixedHeight(24)
         self.btn_reset.clicked.connect(self.reset_clicked.emit)
 
         btn_row.addWidget(self.btn_run)
@@ -125,219 +150,194 @@ class ControlPanelWidget(QWidget):
 
         self.btn_occlude = QPushButton("⚡ SIMULATE BEAM BREAK (1s)")
         self.btn_occlude.setObjectName("BtnOcclude")
+        self.btn_occlude.setFixedHeight(22)
         self.btn_occlude.setFont(get_mono_font(size_pt=8, bold=True))
         self.btn_occlude.setStyleSheet(f"""
             QPushButton#BtnOcclude {{
-                background-color: #2D1A1A;
-                color: #FF7B72;
-                border: 1px solid #5A2A2A;
-                border-radius: 2px;
-                padding: 4px;
+                background-color: #2D1A1A; color: #FF7B72;
+                border: 1px solid #5A2A2A; border-radius: 2px; padding: 2px;
             }}
-            QPushButton#BtnOcclude:hover {{
-                background-color: #3D2222;
-                border: 1px solid #8A3A3A;
-            }}
-            QPushButton#BtnOcclude:pressed {{
-                background-color: #5A2A2A;
-            }}
+            QPushButton#BtnOcclude:hover {{ background-color: #3D2222; border: 1px solid #8A3A3A; }}
+            QPushButton#BtnOcclude:pressed {{ background-color: #5A2A2A; }}
         """)
         self.btn_occlude.clicked.connect(self.occlude_clicked.emit)
         exec_layout.addWidget(self.btn_occlude)
         layout.addWidget(exec_frame)
 
-        # --- SECTION 2: ISRO SYSTEM PARAMETERS ---
-        motion_frame = QFrame()
-        motion_frame.setObjectName("SectionFrame")
-        motion_layout = QVBoxLayout(motion_frame)
-        motion_layout.setContentsMargins(6, 6, 6, 6)
-        motion_layout.setSpacing(6)
+        # ── SECTION 2: ISRO SYSTEM PARAMETERS ────────────────────────────────
+        isro_frame, isro_layout = _section("ISRO SYSTEM PARAMETERS")
 
-        hdr_motion = QLabel("ISRO SYSTEM PARAMETERS")
-        hdr_motion.setObjectName("SectionHeader")
-        motion_layout.addWidget(hdr_motion)
-
-        # --- Camera FOV (ISRO Parameter #4) ---
-        fov_lbl = QLabel("Camera FOV (Pan × Tilt °):")
-        fov_lbl.setFont(get_label_font(size_pt=8))
-        fov_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
-        motion_layout.addWidget(fov_lbl)
-
+        # Camera FOV: Pan & Tilt side-by-side on 1 row
         fov_row = QHBoxLayout()
         fov_row.setSpacing(4)
-        lbl_pan_fov = QLabel("Pan:")
-        lbl_pan_fov.setFont(get_label_font(size_pt=8))
+        fov_lbl = QLabel("Camera FOV:")
+        fov_lbl.setFont(get_label_font(size_pt=8))
+        fov_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
+        fov_lbl.setFixedWidth(72)
+        fov_row.addWidget(fov_lbl)
+
         self.spin_fov_pan = QDoubleSpinBox()
         self.spin_fov_pan.setRange(1.0, 12.0)
         self.spin_fov_pan.setValue(4.0)
         self.spin_fov_pan.setSingleStep(0.5)
+        self.spin_fov_pan.setPrefix("Pan ")
         self.spin_fov_pan.setSuffix("°")
         self.spin_fov_pan.valueChanged.connect(self._on_fov_changed)
 
-        lbl_tilt_fov = QLabel("Tilt:")
-        lbl_tilt_fov.setFont(get_label_font(size_pt=8))
         self.spin_fov_tilt = QDoubleSpinBox()
         self.spin_fov_tilt.setRange(1.0, 9.0)
         self.spin_fov_tilt.setValue(3.0)
         self.spin_fov_tilt.setSingleStep(0.5)
+        self.spin_fov_tilt.setPrefix("Tilt ")
         self.spin_fov_tilt.setSuffix("°")
         self.spin_fov_tilt.valueChanged.connect(self._on_fov_changed)
 
-        fov_row.addWidget(lbl_pan_fov)
-        fov_row.addWidget(self.spin_fov_pan)
-        fov_row.addWidget(lbl_tilt_fov)
-        fov_row.addWidget(self.spin_fov_tilt)
-        motion_layout.addLayout(fov_row)
+        fov_row.addWidget(self.spin_fov_pan, 1)
+        fov_row.addWidget(self.spin_fov_tilt, 1)
+        isro_layout.addLayout(fov_row)
 
-        # --- Target Shape (ISRO Parameter #9) ---
-        lbl_shape = QLabel("Beacon Spot Shape:")
-        lbl_shape.setFont(get_label_font(size_pt=8))
-        lbl_shape.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
-        motion_layout.addWidget(lbl_shape)
-
-        from fsoc.frame_source import TargetShape
+        # Shape
         self.combo_shape = QComboBox()
         self.combo_shape.addItem("Square (Default)", TargetShape.SQUARE)
         self.combo_shape.addItem("Circle", TargetShape.CIRCLE)
         self.combo_shape.addItem("Cross (+)", TargetShape.CROSS)
         self.combo_shape.currentIndexChanged.connect(self._on_shape_changed)
-        motion_layout.addWidget(self.combo_shape)
+        isro_layout.addLayout(_inline_row("Spot Shape:", self.combo_shape))
 
-        # --- Motion model dropdown ---
-        lbl_model = QLabel("Beacon Trajectory Model:")
-        lbl_model.setFont(get_label_font(size_pt=8))
-        lbl_model.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
-        motion_layout.addWidget(lbl_model)
-
+        # Trajectory
         self.combo_motion = QComboBox()
-        self.combo_motion.addItem("Circular Orbit (Default)", MotionModel.CIRCULAR)
-        self.combo_motion.addItem("Linear Flight Path", MotionModel.STRAIGHT)
-        self.combo_motion.addItem("Figure-8 (Lemniscate)", MotionModel.FIGURE_8)
-        self.combo_motion.addItem("Gauss-Markov Random Walk", MotionModel.RANDOM)
+        self.combo_motion.addItem("Circular Orbit", MotionModel.CIRCULAR)
+        self.combo_motion.addItem("Linear Flight", MotionModel.STRAIGHT)
+        self.combo_motion.addItem("Figure-8", MotionModel.FIGURE_8)
+        self.combo_motion.addItem("Random Walk", MotionModel.RANDOM)
         self.combo_motion.currentIndexChanged.connect(self._on_motion_changed)
-        motion_layout.addWidget(self.combo_motion)
+        isro_layout.addLayout(_inline_row("Trajectory:", self.combo_motion))
 
-        # --- Initial Target Location (ISRO Parameter #11, Default: Random) ---
-        lbl_initpos = QLabel("Initial Target Location:")
-        lbl_initpos.setFont(get_label_font(size_pt=8))
-        lbl_initpos.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
-        motion_layout.addWidget(lbl_initpos)
-
+        # Initial Target Location
         self.combo_initpos = QComboBox()
         self.combo_initpos.addItem("Random (ISRO Default)", "random")
         self.combo_initpos.addItem("Custom Coordinates", "custom")
         self.combo_initpos.currentIndexChanged.connect(self._on_initpos_changed)
-        motion_layout.addWidget(self.combo_initpos)
+        isro_layout.addLayout(_inline_row("Init. Pos:", self.combo_initpos))
 
-        custom_pos_row = QHBoxLayout()
-        custom_pos_row.setSpacing(4)
-        lbl_cx = QLabel("X:")
-        lbl_cx.setFont(get_label_font(size_pt=8))
+        # Coordinates X & Y side-by-side on 1 row
+        xy_row = QHBoxLayout()
+        xy_row.setSpacing(4)
+        xy_lbl = QLabel("Spawn (X,Y):")
+        xy_lbl.setFont(get_label_font(size_pt=8))
+        xy_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
+        xy_lbl.setFixedWidth(72)
+        xy_row.addWidget(xy_lbl)
+
         self.spin_custom_x = QDoubleSpinBox()
         self.spin_custom_x.setRange(100.0, 1900.0)
         self.spin_custom_x.setValue(1000.0)
         self.spin_custom_x.setSingleStep(50.0)
-        self.spin_custom_x.setSuffix(" px")
+        self.spin_custom_x.setPrefix("X ")
+        self.spin_custom_x.setSuffix("px")
         self.spin_custom_x.setEnabled(False)
         self.spin_custom_x.valueChanged.connect(self._on_initpos_changed)
 
-        lbl_cy = QLabel("Y:")
-        lbl_cy.setFont(get_label_font(size_pt=8))
         self.spin_custom_y = QDoubleSpinBox()
         self.spin_custom_y.setRange(100.0, 1900.0)
         self.spin_custom_y.setValue(1000.0)
         self.spin_custom_y.setSingleStep(50.0)
-        self.spin_custom_y.setSuffix(" px")
+        self.spin_custom_y.setPrefix("Y ")
+        self.spin_custom_y.setSuffix("px")
         self.spin_custom_y.setEnabled(False)
         self.spin_custom_y.valueChanged.connect(self._on_initpos_changed)
 
-        custom_pos_row.addWidget(lbl_cx)
-        custom_pos_row.addWidget(self.spin_custom_x)
-        custom_pos_row.addWidget(lbl_cy)
-        custom_pos_row.addWidget(self.spin_custom_y)
-        motion_layout.addLayout(custom_pos_row)
+        xy_row.addWidget(self.spin_custom_x, 1)
+        xy_row.addWidget(self.spin_custom_y, 1)
+        isro_layout.addLayout(xy_row)
 
-        # --- Pan & Tilt Speeds (ISRO Parameters #13 & #14, Range 1.0-10.0 °/s) ---
-        params_grid = QGridLayout()
-        params_grid.setContentsMargins(0, 4, 0, 0)
-        params_grid.setHorizontalSpacing(8)
-        params_grid.setVerticalSpacing(4)
+        # ── RF SIDE-LINK ──────────────────────────────────────────────────
+        rf_top = QHBoxLayout()
+        rf_top.setSpacing(4)
+        self.chk_rf = QCheckBox("RF Side-Link (Sim):")
+        self.chk_rf.setFont(get_label_font(size_pt=8, bold=True))
+        self.chk_rf.setStyleSheet(f"color: {COLOR_HUD_ACCENT};")
+        self.chk_rf.setChecked(False)
+        self.chk_rf.toggled.connect(self._on_rf_changed)
+        self.lbl_rf_val = QLabel("σ=80px")
+        self.lbl_rf_val.setFont(get_mono_font(size_pt=8))
+        self.lbl_rf_val.setStyleSheet(f"color: {COLOR_LOCKED};")
+        self.lbl_rf_val.setEnabled(False)
+        rf_top.addWidget(self.chk_rf, 1)
+        rf_top.addWidget(self.lbl_rf_val)
+        isro_layout.addLayout(rf_top)
 
-        lbl_size = QLabel("Target Size:")
-        lbl_size.setFont(get_label_font(size_pt=8))
+        self.slider_rf = QSlider(Qt.Horizontal)
+        self.slider_rf.setRange(10, 200)
+        self.slider_rf.setValue(80)
+        self.slider_rf.setEnabled(False)
+        self.slider_rf.setFixedHeight(16)
+        self.slider_rf.valueChanged.connect(self._on_rf_slider)
+        isro_layout.addWidget(self.slider_rf)
+
+        # Pan & Tilt Speeds side-by-side on 1 row
+        speed_row = QHBoxLayout()
+        speed_row.setSpacing(4)
+        spd_lbl = QLabel("Slew Rate:")
+        spd_lbl.setFont(get_label_font(size_pt=8))
+        spd_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
+        spd_lbl.setFixedWidth(72)
+        speed_row.addWidget(spd_lbl)
+
+        self.spin_pan_speed = QDoubleSpinBox()
+        self.spin_pan_speed.setRange(1.0, 10.0)
+        self.spin_pan_speed.setValue(5.0)
+        self.spin_pan_speed.setSingleStep(0.5)
+        self.spin_pan_speed.setPrefix("Pan ")
+        self.spin_pan_speed.setSuffix("°/s")
+        self.spin_pan_speed.valueChanged.connect(self.pan_speed_changed.emit)
+
+        self.spin_tilt_speed = QDoubleSpinBox()
+        self.spin_tilt_speed.setRange(1.0, 10.0)
+        self.spin_tilt_speed.setValue(5.0)
+        self.spin_tilt_speed.setSingleStep(0.5)
+        self.spin_tilt_speed.setPrefix("Tilt ")
+        self.spin_tilt_speed.setSuffix("°/s")
+        self.spin_tilt_speed.valueChanged.connect(self.tilt_speed_changed.emit)
+
+        speed_row.addWidget(self.spin_pan_speed, 1)
+        speed_row.addWidget(self.spin_tilt_speed, 1)
+        isro_layout.addLayout(speed_row)
+
+        # Target Size
         self.spin_size = QSpinBox()
         self.spin_size.setRange(5, 20)
         self.spin_size.setValue(10)
         self.spin_size.setSuffix(" px")
         self.spin_size.valueChanged.connect(self.target_size_changed.emit)
+        isro_layout.addLayout(_inline_row("Target Size:", self.spin_size))
 
-        lbl_pan_spd = QLabel("Pan Speed:")
-        lbl_pan_spd.setFont(get_label_font(size_pt=8))
-        self.spin_pan_speed = QDoubleSpinBox()
-        self.spin_pan_speed.setRange(1.0, 10.0)
-        self.spin_pan_speed.setValue(5.0)
-        self.spin_pan_speed.setSingleStep(0.5)
-        self.spin_pan_speed.setSuffix(" °/s")
-        self.spin_pan_speed.valueChanged.connect(self.pan_speed_changed.emit)
+        layout.addWidget(isro_frame)
 
-        lbl_tilt_spd = QLabel("Tilt Speed:")
-        lbl_tilt_spd.setFont(get_label_font(size_pt=8))
-        self.spin_tilt_speed = QDoubleSpinBox()
-        self.spin_tilt_speed.setRange(1.0, 10.0)
-        self.spin_tilt_speed.setValue(5.0)
-        self.spin_tilt_speed.setSingleStep(0.5)
-        self.spin_tilt_speed.setSuffix(" °/s")
-        self.spin_tilt_speed.valueChanged.connect(self.tilt_speed_changed.emit)
-
-        params_grid.addWidget(lbl_size, 0, 0)
-        params_grid.addWidget(self.spin_size, 0, 1)
-        params_grid.addWidget(lbl_pan_spd, 1, 0)
-        params_grid.addWidget(self.spin_pan_speed, 1, 1)
-        params_grid.addWidget(lbl_tilt_spd, 2, 0)
-        params_grid.addWidget(self.spin_tilt_speed, 2, 1)
-
-        motion_layout.addLayout(params_grid)
-        layout.addWidget(motion_frame)
-
-        # --- SECTION 3: ATMOSPHERIC CONDITIONS ---
-        atmo_frame = QFrame()
-        atmo_frame.setObjectName("SectionFrame")
-        atmo_layout = QVBoxLayout(atmo_frame)
-        atmo_layout.setContentsMargins(6, 6, 6, 6)
-        atmo_layout.setSpacing(6)
-
-        hdr_atmo = QLabel("ATMOSPHERIC CHANNEL EFFECTS")
-        hdr_atmo.setObjectName("SectionHeader")
-        atmo_layout.addWidget(hdr_atmo)
+        # ── SECTION 3: ATMOSPHERIC CONDITIONS ────────────────────────────────
+        atmo_frame, atmo_layout = _section("ATMOSPHERIC CHANNEL")
 
         self.combo_atmo = QComboBox()
-        self.combo_atmo.addItem("Clear Channel (Nominal Space)", AtmosphericCondition.CLEAR)
-        self.combo_atmo.addItem("Haze (Koschmieder Scattering)", AtmosphericCondition.HAZE)
-        self.combo_atmo.addItem("Dense Fog (Attenuation & Blur)", AtmosphericCondition.FOG)
-        self.combo_atmo.addItem("Dynamic Rain (Angled Streaks)", AtmosphericCondition.RAIN)
-        self.combo_atmo.addItem("Low-Light (Photon Starvation)", AtmosphericCondition.LOW_LIGHT)
+        self.combo_atmo.addItem("Clear (Nominal Space)",      AtmosphericCondition.CLEAR)
+        self.combo_atmo.addItem("Haze (Koschmieder)",         AtmosphericCondition.HAZE)
+        self.combo_atmo.addItem("Dense Fog",                  AtmosphericCondition.FOG)
+        self.combo_atmo.addItem("Dynamic Rain (Streaks)",     AtmosphericCondition.RAIN)
+        self.combo_atmo.addItem("Low-Light (Photon Starved)", AtmosphericCondition.LOW_LIGHT)
         self.combo_atmo.currentIndexChanged.connect(self._on_atmo_changed)
         atmo_layout.addWidget(self.combo_atmo)
         layout.addWidget(atmo_frame)
 
-        # --- SECTION 4: DISTURBANCE INJECTION ---
-        dist_frame = QFrame()
-        dist_frame.setObjectName("SectionFrame")
-        dist_layout = QVBoxLayout(dist_frame)
-        dist_layout.setContentsMargins(6, 6, 6, 6)
-        dist_layout.setSpacing(6)
+        # ── SECTION 4: DISTURBANCE INJECTION ─────────────────────────────────
+        dist_frame, dist_layout = _section("DISTURBANCE INJECTION")
 
-        hdr_dist = QLabel("DISTURBANCE INJECTION ENGINE")
-        hdr_dist.setObjectName("SectionHeader")
-        dist_layout.addWidget(hdr_dist)
-
-        # --- Sky Brightness / Day-Night Ambient Radiance ---
+        # Sky Radiance
         sky_row = QHBoxLayout()
-        lbl_sky = QLabel("Sky Radiance (Day/Night):")
-        lbl_sky.setFont(get_label_font(size_pt=8, bold=True))
+        sky_lbl = QLabel("Sky Radiance:")
+        sky_lbl.setFont(get_label_font(size_pt=8, bold=True))
+        sky_lbl.setFixedWidth(80)
         self.lbl_sky_val = QLabel(f"{int(self.config.sky_radiance * 100)}% (Night)")
         self.lbl_sky_val.setFont(get_mono_font(size_pt=8))
-        sky_row.addWidget(lbl_sky)
+        sky_row.addWidget(sky_lbl)
         sky_row.addStretch()
         sky_row.addWidget(self.lbl_sky_val)
         dist_layout.addLayout(sky_row)
@@ -345,177 +345,160 @@ class ControlPanelWidget(QWidget):
         self.slider_sky = QSlider(Qt.Horizontal)
         self.slider_sky.setRange(0, 100)
         self.slider_sky.setValue(int(self.config.sky_radiance * 100))
+        self.slider_sky.setFixedHeight(16)
         self.slider_sky.valueChanged.connect(self._on_sky_slider)
         dist_layout.addWidget(self.slider_sky)
 
-        # Quick Presets Row
         preset_row = QHBoxLayout()
-        preset_row.setSpacing(4)
+        preset_row.setSpacing(2)
         for label, val in [("Night", 0), ("Dusk", 30), ("Overcast", 60), ("Noon", 100)]:
             btn = QPushButton(label)
-            btn.setFixedHeight(20)
+            btn.setFixedHeight(16)
             btn.setFont(get_mono_font(size_pt=7))
-            btn.setStyleSheet(f"background-color: {COLOR_SURFACE_INPUT}; border: 1px solid {COLOR_BORDER};")
+            btn.setStyleSheet(f"background-color: {COLOR_SURFACE_INPUT}; border: 1px solid {COLOR_BORDER}; padding: 0px;")
             btn.clicked.connect(lambda _, v=val, l=label: self._set_sky_preset(v, l))
             preset_row.addWidget(btn)
         dist_layout.addLayout(preset_row)
 
-        # Salt and Pepper Noise (10% default)
+        # Salt & Pepper
         sp_row = QHBoxLayout()
-        self.chk_sp = QCheckBox("Salt & Pepper Noise:")
+        self.chk_sp = QCheckBox("S&P Noise:")
+        self.chk_sp.setFont(get_label_font(size_pt=8))
         self.chk_sp.setChecked(self.config.enable_salt_pepper)
         self.chk_sp.toggled.connect(self._on_sp_toggled)
         self.lbl_sp_val = QLabel(f"{int(self.config.salt_pepper_ratio * 100)}%")
         self.lbl_sp_val.setFont(get_mono_font(size_pt=8))
-        sp_row.addWidget(self.chk_sp)
-        sp_row.addStretch()
+        sp_row.addWidget(self.chk_sp, 1)
         sp_row.addWidget(self.lbl_sp_val)
         dist_layout.addLayout(sp_row)
-
         self.slider_sp = QSlider(Qt.Horizontal)
-        self.slider_sp.setRange(0, 30) # 0 to 30%
+        self.slider_sp.setRange(0, 30)
         self.slider_sp.setValue(int(self.config.salt_pepper_ratio * 100))
+        self.slider_sp.setFixedHeight(16)
         self.slider_sp.valueChanged.connect(self._on_sp_slider)
         dist_layout.addWidget(self.slider_sp)
 
         # Gaussian Noise
         gauss_row = QHBoxLayout()
-        self.chk_gauss = QCheckBox("Gaussian Thermal Noise:")
+        self.chk_gauss = QCheckBox("Gaussian Noise:")
+        self.chk_gauss.setFont(get_label_font(size_pt=8))
         self.chk_gauss.setChecked(self.config.enable_gaussian)
         self.chk_gauss.toggled.connect(self._on_gauss_toggled)
         self.lbl_gauss_val = QLabel(f"σ={int(self.config.gaussian_sigma)}")
         self.lbl_gauss_val.setFont(get_mono_font(size_pt=8))
-        gauss_row.addWidget(self.chk_gauss)
-        gauss_row.addStretch()
+        gauss_row.addWidget(self.chk_gauss, 1)
         gauss_row.addWidget(self.lbl_gauss_val)
         dist_layout.addLayout(gauss_row)
-
         self.slider_gauss = QSlider(Qt.Horizontal)
-        self.slider_gauss.setRange(1, 20)   # ISRO hard cap: σ ≤ 20
+        self.slider_gauss.setRange(1, 20)  # ISRO cap σ ≤ 20
         self.slider_gauss.setValue(min(20, int(self.config.gaussian_sigma)))
+        self.slider_gauss.setFixedHeight(16)
         self.slider_gauss.valueChanged.connect(self._on_gauss_slider)
         dist_layout.addWidget(self.slider_gauss)
 
-        # Poisson Noise
-        self.chk_poisson = QCheckBox("Poisson Shot Noise (Photon Fluctuation)")
+        # Poisson
+        self.chk_poisson = QCheckBox("Poisson Shot Noise")
+        self.chk_poisson.setFont(get_label_font(size_pt=8))
         self.chk_poisson.setChecked(self.config.enable_poisson)
         self.chk_poisson.toggled.connect(lambda v: setattr(self.config, "enable_poisson", v))
         dist_layout.addWidget(self.chk_poisson)
 
-        # Camera Jitter (±20px default)
+        # Camera Jitter
         jit_row = QHBoxLayout()
         self.chk_jitter = QCheckBox("Camera Jitter:")
+        self.chk_jitter.setFont(get_label_font(size_pt=8))
         self.chk_jitter.setChecked(self.config.enable_camera_jitter)
         self.chk_jitter.toggled.connect(self._on_jitter_toggled)
         self.lbl_jit_val = QLabel(f"±{int(self.config.camera_jitter_max_px)}px")
         self.lbl_jit_val.setFont(get_mono_font(size_pt=8))
-        jit_row.addWidget(self.chk_jitter)
-        jit_row.addStretch()
+        jit_row.addWidget(self.chk_jitter, 1)
         jit_row.addWidget(self.lbl_jit_val)
         dist_layout.addLayout(jit_row)
 
-        # Jitter Mode Selector (Steady vs. Dynamic PSD)
         jit_mode_row = QHBoxLayout()
-        lbl_jmode = QLabel("Jitter Physics:")
-        lbl_jmode.setFont(get_label_font(size_pt=8))
+        lbl_jmode = QLabel("Jitter Model:")
+        lbl_jmode.setFont(get_label_font(size_pt=7))
         lbl_jmode.setStyleSheet(f"color: {COLOR_TEXT_DIM};")
+        lbl_jmode.setFixedWidth(56)
         self.combo_jitter_mode = QComboBox()
         self.combo_jitter_mode.addItem("Dynamic PSD (Dabiri)", JitterMode.DYNAMIC_PSD)
         self.combo_jitter_mode.addItem("Steady (Fixed ±px)", JitterMode.STEADY)
         self.combo_jitter_mode.setCurrentIndex(0 if self.config.jitter_mode == JitterMode.DYNAMIC_PSD else 1)
         self.combo_jitter_mode.currentIndexChanged.connect(self._on_jitter_mode_changed)
         jit_mode_row.addWidget(lbl_jmode)
-        jit_mode_row.addWidget(self.combo_jitter_mode)
+        jit_mode_row.addWidget(self.combo_jitter_mode, 1)
         dist_layout.addLayout(jit_mode_row)
 
         self.slider_jitter = QSlider(Qt.Horizontal)
-        self.slider_jitter.setRange(1, 20)   # ISRO hard cap: ≤ ±20px
+        self.slider_jitter.setRange(1, 20)  # ISRO cap ≤ ±20px
         self.slider_jitter.setValue(min(20, int(self.config.camera_jitter_max_px)))
+        self.slider_jitter.setFixedHeight(16)
         self.slider_jitter.valueChanged.connect(self._on_jitter_slider)
         dist_layout.addWidget(self.slider_jitter)
 
-        # Platform Motion (±20px default)
+        # Platform Motion
         plat_row = QHBoxLayout()
         self.chk_plat = QCheckBox("Platform Motion:")
+        self.chk_plat.setFont(get_label_font(size_pt=8))
         self.chk_plat.setChecked(self.config.enable_platform_motion)
         self.chk_plat.toggled.connect(self._on_plat_toggled)
         self.lbl_plat_val = QLabel(f"±{int(self.config.platform_motion_max_px)}px")
         self.lbl_plat_val.setFont(get_mono_font(size_pt=8))
-        plat_row.addWidget(self.chk_plat)
-        plat_row.addStretch()
+        plat_row.addWidget(self.chk_plat, 1)
         plat_row.addWidget(self.lbl_plat_val)
         dist_layout.addLayout(plat_row)
-
         self.slider_plat = QSlider(Qt.Horizontal)
-        self.slider_plat.setRange(1, 20)   # ISRO hard cap: ≤ ±20px
+        self.slider_plat.setRange(1, 20)  # ISRO cap ≤ ±20px
         self.slider_plat.setValue(min(20, int(self.config.platform_motion_max_px)))
+        self.slider_plat.setFixedHeight(16)
         self.slider_plat.valueChanged.connect(self._on_plat_slider)
         dist_layout.addWidget(self.slider_plat)
 
         layout.addWidget(dist_frame)
 
-        # --- SECTION 5: BENCHMARK-2 VIDEO MODE (VISUALLY SEPARATED) ---
-        # Strictly separated visual identity per specification
+        # ── SECTION 5: BENCHMARK-2 ────────────────────────────────────────────
         bench_frame = QFrame()
         bench_frame.setObjectName("BenchmarkCard")
         bench_frame.setStyleSheet(f"""
             QFrame#BenchmarkCard {{
-                background-color: #0E1520;
-                border: 1px solid #1C3352;
-                border-radius: 2px;
-                padding: 6px;
+                background-color: #0E1520; border: 1px solid #1C3352;
+                border-radius: 2px; padding: 2px;
             }}
         """)
         bench_layout = QVBoxLayout(bench_frame)
-        bench_layout.setContentsMargins(6, 6, 6, 6)
-        bench_layout.setSpacing(6)
+        bench_layout.setContentsMargins(5, 4, 5, 4)
+        bench_layout.setSpacing(3)
 
-        hdr_bench = QLabel("BENCHMARK-2: RAW VIDEO VALIDATION")
+        hdr_bench = QLabel("BENCHMARK-2: RAW VIDEO")
         hdr_bench.setObjectName("SectionHeader")
         hdr_bench.setStyleSheet(f"color: {COLOR_HUD_ACCENT}; border-bottom-color: #1C3352;")
         bench_layout.addWidget(hdr_bench)
 
         self.lbl_mode_status = QLabel("ACTIVE: SIMULATOR (SYNTHETIC)")
-        self.lbl_mode_status.setFont(get_mono_font(size_pt=8, bold=True))
+        self.lbl_mode_status.setFont(get_mono_font(size_pt=7, bold=True))
         self.lbl_mode_status.setStyleSheet(f"color: {COLOR_LOCKED};")
         bench_layout.addWidget(self.lbl_mode_status)
 
-        desc_bench = QLabel(
-            "Validates detector/tracker on un-simulated raw MP4 footage. PTZ commands are logged as no-ops."
-        )
-        desc_bench.setWordWrap(True)
-        desc_bench.setFont(get_label_font(size_pt=8))
-        desc_bench.setStyleSheet(f"color: {COLOR_TEXT_DIM};")
-        bench_layout.addWidget(desc_bench)
-
         self.btn_load_video = QPushButton("LOAD VIDEO FILE (.MP4)...")
+        self.btn_load_video.setFixedHeight(22)
         self.btn_load_video.setStyleSheet(f"""
-            background-color: #162438;
-            color: {COLOR_HUD_ACCENT};
-            border: 1px solid #29456B;
+            background-color: #162438; color: {COLOR_HUD_ACCENT}; border: 1px solid #29456B;
         """)
         self.btn_load_video.clicked.connect(self._on_browse_video)
         bench_layout.addWidget(self.btn_load_video)
 
         self.btn_switch_sim = QPushButton("RETURN TO SIMULATOR")
+        self.btn_switch_sim.setFixedHeight(22)
         self.btn_switch_sim.setEnabled(False)
         self.btn_switch_sim.clicked.connect(self._on_return_sim)
         bench_layout.addWidget(self.btn_switch_sim)
-
         layout.addWidget(bench_frame)
 
-        # --- SECTION 6: TELEMETRY EXPORT ---
-        export_frame = QFrame()
-        export_frame.setObjectName("SectionFrame")
-        export_layout = QVBoxLayout(export_frame)
-        export_layout.setContentsMargins(6, 6, 6, 6)
-        export_layout.setSpacing(6)
-
-        hdr_exp = QLabel("AUDIT LOG GENERATION")
-        hdr_exp.setObjectName("SectionHeader")
-        export_layout.addWidget(hdr_exp)
+        # ── SECTION 6: TELEMETRY EXPORT ──────────────────────────────────────
+        export_frame, export_layout = _section("AUDIT LOG")
 
         self.btn_export = QPushButton("EXPORT SESSION LOG (CSV/JSON)")
+        self.btn_export.setFixedHeight(22)
         self.btn_export.clicked.connect(self.export_logs_clicked.emit)
         export_layout.addWidget(self.btn_export)
 
@@ -525,10 +508,11 @@ class ControlPanelWidget(QWidget):
         export_layout.addWidget(self.lbl_export_status)
 
         layout.addWidget(export_frame)
-        layout.addStretch()
 
         scroll.setWidget(content)
         main_layout.addWidget(scroll)
+
+    # ── Signal handlers ───────────────────────────────────────────────────────
 
     def _on_motion_changed(self, index: int) -> None:
         model = self.combo_motion.itemData(index)
@@ -550,27 +534,33 @@ class ControlPanelWidget(QWidget):
         self.spin_custom_y.setEnabled(is_custom)
         self.initial_pos_changed.emit(mode, self.spin_custom_x.value(), self.spin_custom_y.value())
 
+    def _on_rf_changed(self, checked: bool) -> None:
+        self.slider_rf.setEnabled(checked)
+        self.lbl_rf_val.setEnabled(checked)
+        self.rf_link_changed.emit(checked, float(self.slider_rf.value()))
+
+    def _on_rf_slider(self, val: int) -> None:
+        self.lbl_rf_val.setText(f"σ={val}px")
+        self.rf_link_changed.emit(self.chk_rf.isChecked(), float(val))
+
     def _on_atmo_changed(self, index: int) -> None:
         cond = self.combo_atmo.itemData(index)
         if cond is not None:
             self.config.atmospheric_condition = cond
 
     def _on_sky_slider(self, val: int) -> None:
-        rad = val / 100.0
-        self.config.sky_radiance = rad
-        tag = "Night" if val < 20 else ("Dusk" if val < 50 else ("Overcast" if val < 80 else "High Noon"))
+        self.config.sky_radiance = val / 100.0
+        tag = "Night" if val < 20 else ("Dusk" if val < 50 else ("Overcast" if val < 80 else "Noon"))
         self.lbl_sky_val.setText(f"{val}% ({tag})")
 
     def _set_sky_preset(self, val: int, label: str) -> None:
         self.slider_sky.setValue(val)
-        self._on_sky_slider(val)
 
     def _on_sp_toggled(self, checked: bool) -> None:
         self.config.enable_salt_pepper = checked
 
     def _on_sp_slider(self, val: int) -> None:
-        ratio = val / 100.0
-        self.config.salt_pepper_ratio = ratio
+        self.config.salt_pepper_ratio = val / 100.0
         self.lbl_sp_val.setText(f"{val}%")
 
     def _on_gauss_toggled(self, checked: bool) -> None:
@@ -602,9 +592,7 @@ class ControlPanelWidget(QWidget):
     def _on_browse_video(self) -> None:
         default_dir = os.path.abspath("assets")
         file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Benchmark-2 Video File",
-            default_dir,
+            self, "Select Benchmark-2 Video File", default_dir,
             "Video Files (*.mp4 *.avi *.mkv);;All Files (*)",
         )
         if file_path:

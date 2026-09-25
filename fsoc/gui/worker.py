@@ -45,6 +45,7 @@ class TrackingThread(QThread):
         self._pending_initial_pos: Optional[tuple] = None  # (mode, x, y)
         self._pending_pan_speed: Optional[float] = None
         self._pending_tilt_speed: Optional[float] = None
+        self._pending_rf_link: Optional[tuple] = None  # (active: bool, uncertainty_px: float)
 
     def run(self) -> None:
         """Main real-time tracking thread loop."""
@@ -103,6 +104,10 @@ class TrackingThread(QThread):
                 if self._pending_tilt_speed is not None:
                     self.pipeline.set_tilt_speed(self._pending_tilt_speed)
                     self._pending_tilt_speed = None
+
+                if self._pending_rf_link is not None:
+                    self.pipeline.set_rf_link(*self._pending_rf_link)
+                    self._pending_rf_link = None
 
                 is_paused = self._paused
 
@@ -191,3 +196,8 @@ class TrackingThread(QThread):
         """Queue tilt axis speed update (ISRO Parameter #14)."""
         with self._mutex:
             self._pending_tilt_speed = speed_deg_s
+
+    def request_rf_link(self, active: bool, uncertainty_px: float) -> None:
+        """Queue RF side-link simulation update."""
+        with self._mutex:
+            self._pending_rf_link = (active, uncertainty_px)

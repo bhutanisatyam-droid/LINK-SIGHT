@@ -17,8 +17,8 @@ class CutHexagonalSpiralSearch:
 
     def __init__(
         self,
-        step_size_deg: float = 0.8,            # Optimal step size covering camera FOV and orbit
-        confidence_threshold: float = 0.60,    # Immediate abort threshold on verified optical detection
+        step_size_deg: float = 1.1,            # Step size covering camera FOV with overlap
+        confidence_threshold: float = 0.42,    # Immediate abort threshold on verified optical detection
         dwell_frames: int = 1,                 # Frames to hold pointing per waypoint
     ):
         self.step_size_deg = step_size_deg
@@ -32,7 +32,7 @@ class CutHexagonalSpiralSearch:
         self.is_active: bool = False
         self.search_center: Tuple[float, float] = (0.0, 0.0)
         self.current_radius_deg: float = 1.6
-        self.max_radius_deg: float = 5.0
+        self.max_radius_deg: float = 5.8
 
     def generate_angular_hex_pattern(
         self,
@@ -42,8 +42,8 @@ class CutHexagonalSpiralSearch:
         """Generate ordered hexagonal spiral waypoints in gimbal angular space (degrees)."""
         cx, cy = center_deg
         # Clamp center within physical gimbal limits
-        cx = max(-4.5, min(4.5, cx))
-        cy = max(-4.5, min(4.5, cy))
+        cx = max(-5.5, min(5.5, cx))
+        cy = max(-5.5, min(5.5, cy))
         pts: List[Tuple[float, float]] = [(cx, cy)]  # Center point is always first
 
         s = self.step_size_deg
@@ -64,8 +64,8 @@ class CutHexagonalSpiralSearch:
                 for _ in range(ring):
                     dist = math.hypot(curr_x - cx, curr_y - cy)
                     if dist <= max_radius_deg + 1e-4:
-                        clamped_x = max(-5.5, min(5.5, curr_x))
-                        clamped_y = max(-5.5, min(5.5, curr_y))
+                        clamped_x = max(-5.8, min(5.8, curr_x))
+                        clamped_y = max(-5.8, min(5.8, curr_y))
                         pts.append((clamped_x, clamped_y))
                     curr_x += step_dir[0]
                     curr_y += step_dir[1]
@@ -75,7 +75,7 @@ class CutHexagonalSpiralSearch:
     def start_search(
         self,
         center_deg: Tuple[float, float] = (0.0, 0.0),
-        max_radius_deg: float = 5.0,
+        max_radius_deg: float = 5.8,
         initial_radius_deg: Optional[float] = None,
     ) -> None:
         """Initiate cut hexagonal spiral re-acquisition search centered at last known position or home."""
@@ -110,10 +110,10 @@ class CutHexagonalSpiralSearch:
         if not self.is_active:
             return None
 
-        # Two consecutive verified detections required to abort search (prevents single-frame noise glitches)
+        # Verified detection immediately halts search and locks on
         if detection_confidence >= self.conf_threshold:
             self.consecutive_confirms += 1
-            if self.consecutive_confirms >= 2:
+            if self.consecutive_confirms >= 1:
                 self.stop_search()
                 return None
         else:
@@ -136,8 +136,8 @@ class CutHexagonalSpiralSearch:
         err_dist = math.hypot(wp[0] - cam_pan_deg, wp[1] - cam_tilt_deg)
 
         self.current_dwell += 1
-        # Advance to next waypoint if reached within 0.35 deg or dwelled for 4 frames (~0.13s)
-        if err_dist < 0.35 or self.current_dwell >= 4:
+        # Advance to next waypoint if reached within 0.45 deg or dwelled for 3 frames (~0.10s)
+        if err_dist < 0.45 or self.current_dwell >= 3:
             self.current_dwell = 0
             self.current_idx += 1
             if self.current_idx >= len(self.waypoints_deg):
