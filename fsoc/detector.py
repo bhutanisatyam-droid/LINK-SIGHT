@@ -156,10 +156,6 @@ class ClassicalBeaconDetector(BaseDetector):
             perimeter = cv2.arcLength(c, True)
             circularity = (4.0 * np.pi * contour_area) / (perimeter * perimeter + 1e-6) if perimeter > 0 else 0.0
 
-            # Reject non-compact noise streaks
-            if circularity < 0.15:
-                continue
-
             effective_area = max(contour_area, bounding_area * 0.4)
 
             # Sub-window peak intensity and SNR
@@ -169,8 +165,8 @@ class ClassicalBeaconDetector(BaseDetector):
             peak_raw = float(np.max(roi_raw)) if roi_raw.size > 0 else 0.0
             total_energy = float(np.sum(roi_tophat)) if roi_tophat.size > 0 else 0.0
 
-            # Reject noise fluctuations: real optical spot has peak >= 35 and total energy >= 500
-            if peak_val < 35.0 or total_energy < 500.0:
+            # Reject noise fluctuations: real optical spot has peak >= 25 and total energy >= 80
+            if peak_val < 25.0 or total_energy < 80.0:
                 continue
 
             # Signal-to-Noise Ratio (dB)
@@ -189,17 +185,17 @@ class ClassicalBeaconDetector(BaseDetector):
 
             # Analytical Quality / Confidence Metric [0.0 to 1.0]
             aspect_score = 1.0 - min(abs(1.0 - aspect), 0.6)
-            circ_score = min(circularity / 0.70, 1.0)
+            circ_score = min(max(circularity, 0.20) / 0.70, 1.0)
             peak_score = min(peak_val / 140.0, 1.0)
             snr_score = min(snr_db / 20.0, 1.0)
-            energy_score = min(total_energy / 2000.0, 1.0)
+            energy_score = min(total_energy / 1000.0, 1.0)
 
             confidence = float(
                 0.30 * snr_score + 0.30 * energy_score + 0.20 * peak_score + 0.10 * circ_score + 0.10 * aspect_score
             )
             confidence = max(0.0, min(1.0, confidence))
 
-            if confidence >= 0.40:
+            if confidence >= 0.30:
                 candidates.append(
                     DetectionResult(
                         detected=True,

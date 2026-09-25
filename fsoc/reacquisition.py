@@ -17,8 +17,8 @@ class CutHexagonalSpiralSearch:
 
     def __init__(
         self,
-        step_size_deg: float = 1.1,            # Step size covering camera FOV with overlap
-        confidence_threshold: float = 0.42,    # Immediate abort threshold on verified optical detection
+        step_size_deg: float = 1.6,            # Step size with 60% camera FOV overlap
+        confidence_threshold: float = 0.30,    # Fast abort threshold on verified optical detection
         dwell_frames: int = 1,                 # Frames to hold pointing per waypoint
     ):
         self.step_size_deg = step_size_deg
@@ -31,19 +31,19 @@ class CutHexagonalSpiralSearch:
         self.consecutive_confirms: int = 0
         self.is_active: bool = False
         self.search_center: Tuple[float, float] = (0.0, 0.0)
-        self.current_radius_deg: float = 1.6
+        self.current_radius_deg: float = 5.8
         self.max_radius_deg: float = 5.8
 
     def generate_angular_hex_pattern(
         self,
         center_deg: Tuple[float, float] = (0.0, 0.0),
-        max_radius_deg: float = 1.5,
+        max_radius_deg: float = 5.8,
     ) -> List[Tuple[float, float]]:
         """Generate ordered hexagonal spiral waypoints in gimbal angular space (degrees)."""
         cx, cy = center_deg
         # Clamp center within physical gimbal limits
-        cx = max(-5.5, min(5.5, cx))
-        cy = max(-5.5, min(5.5, cy))
+        cx = max(-5.0, min(5.0, cx))
+        cy = max(-5.0, min(5.0, cy))
         pts: List[Tuple[float, float]] = [(cx, cy)]  # Center point is always first
 
         s = self.step_size_deg
@@ -81,8 +81,8 @@ class CutHexagonalSpiralSearch:
         """Initiate cut hexagonal spiral re-acquisition search centered at last known position or home."""
         self.search_center = center_deg
         self.max_radius_deg = max_radius_deg
-        self.current_radius_deg = initial_radius_deg if initial_radius_deg is not None else min(max_radius_deg, 1.6)
-        self.waypoints_deg = self.generate_angular_hex_pattern(self.search_center, self.current_radius_deg)
+        self.current_radius_deg = max_radius_deg
+        self.waypoints_deg = self.generate_angular_hex_pattern(self.search_center, self.max_radius_deg)
         self.current_idx = 0
         self.current_dwell = 0
         self.consecutive_confirms = 0
@@ -112,41 +112,24 @@ class CutHexagonalSpiralSearch:
 
         # Verified detection immediately halts search and locks on
         if detection_confidence >= self.conf_threshold:
-            self.consecutive_confirms += 1
-            if self.consecutive_confirms >= 1:
-                self.stop_search()
-                return None
-        else:
-            self.consecutive_confirms = 0
+            self.stop_search()
+            return None
 
         if not self.waypoints_deg:
-            self.start_search(self.search_center, self.max_radius_deg, self.current_radius_deg)
+            self.start_search(self.search_center, self.max_radius_deg)
             return self.search_center
 
         if self.current_idx >= len(self.waypoints_deg):
-            # Expand search radius hierarchically
-            if self.current_radius_deg < self.max_radius_deg:
-                self.current_radius_deg = min(self.max_radius_deg, self.current_radius_deg + 1.6)
-                self.waypoints_deg = self.generate_angular_hex_pattern(self.search_center, self.current_radius_deg)
-                self.current_idx = 0
-            else:
-                self.current_idx = 0
+            self.current_idx = 0
 
         wp = self.waypoints_deg[self.current_idx]
         err_dist = math.hypot(wp[0] - cam_pan_deg, wp[1] - cam_tilt_deg)
 
         self.current_dwell += 1
-        # Advance to next waypoint if reached within 0.45 deg or dwelled for 3 frames (~0.10s)
-        if err_dist < 0.45 or self.current_dwell >= 3:
+        # Advance to next waypoint if reached within 0.60 deg or dwelled for 20 frames (~0.6s)
+        if err_dist < 0.60 or self.current_dwell >= 20:
             self.current_dwell = 0
-            self.current_idx += 1
-            if self.current_idx >= len(self.waypoints_deg):
-                if self.current_radius_deg < self.max_radius_deg:
-                    self.current_radius_deg = min(self.max_radius_deg, self.current_radius_deg + 1.6)
-                    self.waypoints_deg = self.generate_angular_hex_pattern(self.search_center, self.current_radius_deg)
-                    self.current_idx = 0
-                else:
-                    self.current_idx = 0
+            self.current_idx = (self.current_idx + 1) % len(self.waypoints_deg)
 
         if self.current_idx < len(self.waypoints_deg):
             return self.waypoints_deg[self.current_idx]

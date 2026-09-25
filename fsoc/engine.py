@@ -247,10 +247,17 @@ class TrackingPipeline:
                 track = self.tracker.update(detection, dt)
                 status_label = "ACQUIRING [SPIRAL SEARCH]"
             else:
-                # Re-acquisition succeeded or search pattern finished!
+                # Re-acquisition succeeded! Immediately lock and track
                 track = self.tracker.update(detection, dt)
-                status_label = "RE-ACQUIRED"
                 self._unacquired_frames = 0
+                if track.status == TrackStatus.TRACKING:
+                    status_label = "TRACKING [LOCKED]"
+                    pan_rate, tilt_rate = self.controller.compute_command(
+                        target_pos=track.pos, dt=dt, target_vel=track.vel
+                    )
+                    self.frame_source.apply_ptz_velocity(pan_rate, tilt_rate, dt)
+                else:
+                    status_label = "RE-ACQUIRED"
 
             # Convert angular waypoints to pixel coordinates on current frame for HUD
             pxd_x = getattr(self.frame_source, 'px_per_deg_x', 160.0)
