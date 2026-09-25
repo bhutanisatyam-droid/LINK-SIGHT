@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(
-            "ISRO / DOS ATP COARSE-ALIGNMENT VIRTUAL TRACKING SYSTEM — RESEARCH DEMO [SIH-2026]"
+            "ATP COARSE-ALIGNMENT VIRTUAL TRACKING SYSTEM — RESEARCH DEMO [SIH-2026]"
         )
         self.resize(1380, 880)
         self.setMinimumSize(1100, 720)
@@ -98,7 +98,7 @@ class MainWindow(QMainWindow):
         hdr_layout.setSpacing(16)
 
         # Title / Subsystem Tag
-        title_lbl = QLabel("ISRO-DOS // FSOC ATP COARSE TRACKING TERMINAL")
+        title_lbl = QLabel("ATP-DOS // FSOC COARSE POINTING TERMINAL")
         title_lbl.setObjectName("HeaderTitle")
         hdr_layout.addWidget(title_lbl)
 

@@ -164,8 +164,8 @@ class ControlPanelWidget(QWidget):
         exec_layout.addWidget(self.btn_occlude)
         layout.addWidget(exec_frame)
 
-        # ── SECTION 2: ISRO SYSTEM PARAMETERS ────────────────────────────────
-        isro_frame, isro_layout = _section("ISRO SYSTEM PARAMETERS")
+        # ── SECTION 2: SYSTEM PARAMETERS ─────────────────────────────────────
+        sys_frame, sys_layout = _section("SYSTEM PARAMETERS")
 
         # Camera FOV: Pan & Tilt side-by-side on 1 row
         fov_row = QHBoxLayout()
@@ -196,7 +196,7 @@ class ControlPanelWidget(QWidget):
 
         fov_row.addWidget(self.spin_fov_pan, 1)
         fov_row.addWidget(self.spin_fov_tilt, 1)
-        isro_layout.addLayout(fov_row)
+        sys_layout.addLayout(fov_row)
 
         # Shape
         self.combo_shape = QComboBox()
@@ -204,7 +204,7 @@ class ControlPanelWidget(QWidget):
         self.combo_shape.addItem("Circle", TargetShape.CIRCLE)
         self.combo_shape.addItem("Cross (+)", TargetShape.CROSS)
         self.combo_shape.currentIndexChanged.connect(self._on_shape_changed)
-        isro_layout.addLayout(_inline_row("Spot Shape:", self.combo_shape, 64))
+        sys_layout.addLayout(_inline_row("Spot Shape:", self.combo_shape, 64))
 
         # Trajectory
         self.combo_motion = QComboBox()
@@ -213,14 +213,14 @@ class ControlPanelWidget(QWidget):
         self.combo_motion.addItem("Figure-8", MotionModel.FIGURE_8)
         self.combo_motion.addItem("Random Walk", MotionModel.RANDOM)
         self.combo_motion.currentIndexChanged.connect(self._on_motion_changed)
-        isro_layout.addLayout(_inline_row("Trajectory:", self.combo_motion, 64))
+        sys_layout.addLayout(_inline_row("Trajectory:", self.combo_motion, 64))
 
         # Initial Target Location
         self.combo_initpos = QComboBox()
-        self.combo_initpos.addItem("Random (ISRO Default)", "random")
+        self.combo_initpos.addItem("Random (Default)", "random")
         self.combo_initpos.addItem("Custom Coordinates", "custom")
         self.combo_initpos.currentIndexChanged.connect(self._on_initpos_changed)
-        isro_layout.addLayout(_inline_row("Init. Pos:", self.combo_initpos, 64))
+        sys_layout.addLayout(_inline_row("Init. Pos:", self.combo_initpos, 64))
 
         # Coordinates X & Y side-by-side on 1 row
         xy_row = QHBoxLayout()
@@ -253,33 +253,35 @@ class ControlPanelWidget(QWidget):
 
         xy_row.addWidget(self.spin_custom_x, 1)
         xy_row.addWidget(self.spin_custom_y, 1)
-        isro_layout.addLayout(xy_row)
+        sys_layout.addLayout(xy_row)
 
         # ── RF SIDE-LINK ──────────────────────────────────────────────────
         rf_top = QHBoxLayout()
         rf_top.setSpacing(4)
         self.chk_rf = QCheckBox("RF Side-Link (Sim):")
+        self.chk_rf.setToolTip("Simulate auxiliary RF radio ephemeris aiding with angular noise (σ) when optical lock drops")
         self.chk_rf.setFont(get_label_font(size_pt=8, bold=True))
         self.chk_rf.setStyleSheet(f"color: {COLOR_HUD_ACCENT};")
         self.chk_rf.setChecked(False)
         self.chk_rf.toggled.connect(self._on_rf_changed)
-        self.lbl_rf_val = QLabel("σ=80px")
+        self.lbl_rf_val = QLabel("σ=80px (Noise)")
         self.lbl_rf_val.setFont(get_mono_font(size_pt=8))
         self.lbl_rf_val.setStyleSheet(f"color: {COLOR_LOCKED};")
         self.lbl_rf_val.setEnabled(False)
         rf_top.addWidget(self.chk_rf, 1)
         rf_top.addWidget(self.lbl_rf_val)
-        isro_layout.addLayout(rf_top)
+        sys_layout.addLayout(rf_top)
 
         self.slider_rf = QSlider(Qt.Horizontal)
+        self.slider_rf.setToolTip("RF Ephemeris Uncertainty (1-sigma error basket in pixels)")
         self.slider_rf.setRange(10, 200)
         self.slider_rf.setValue(80)
         self.slider_rf.setEnabled(False)
         self.slider_rf.setFixedHeight(16)
         self.slider_rf.valueChanged.connect(self._on_rf_slider)
-        isro_layout.addWidget(self.slider_rf)
+        sys_layout.addWidget(self.slider_rf)
 
-        # Pan & Tilt Speeds side-by-side on 1 row
+        # Pan & Tilt Speeds (Slew Rate: Range 5.0 - 10.0 deg/s)
         speed_row = QHBoxLayout()
         speed_row.setSpacing(4)
         spd_lbl = QLabel("Slew Rate:")
@@ -289,7 +291,7 @@ class ControlPanelWidget(QWidget):
         speed_row.addWidget(spd_lbl)
 
         self.spin_pan_speed = QDoubleSpinBox()
-        self.spin_pan_speed.setRange(1.0, 10.0)
+        self.spin_pan_speed.setRange(5.0, 10.0)
         self.spin_pan_speed.setDecimals(1)
         self.spin_pan_speed.setValue(5.0)
         self.spin_pan_speed.setSingleStep(0.5)
@@ -298,7 +300,7 @@ class ControlPanelWidget(QWidget):
         self.spin_pan_speed.valueChanged.connect(self.pan_speed_changed.emit)
 
         self.spin_tilt_speed = QDoubleSpinBox()
-        self.spin_tilt_speed.setRange(1.0, 10.0)
+        self.spin_tilt_speed.setRange(5.0, 10.0)
         self.spin_tilt_speed.setDecimals(1)
         self.spin_tilt_speed.setValue(5.0)
         self.spin_tilt_speed.setSingleStep(0.5)
@@ -308,7 +310,7 @@ class ControlPanelWidget(QWidget):
 
         speed_row.addWidget(self.spin_pan_speed, 1)
         speed_row.addWidget(self.spin_tilt_speed, 1)
-        isro_layout.addLayout(speed_row)
+        sys_layout.addLayout(speed_row)
 
         # Target Size
         self.spin_size = QSpinBox()
@@ -316,9 +318,9 @@ class ControlPanelWidget(QWidget):
         self.spin_size.setValue(10)
         self.spin_size.setSuffix(" px")
         self.spin_size.valueChanged.connect(self.target_size_changed.emit)
-        isro_layout.addLayout(_inline_row("Target Size:", self.spin_size, 64))
+        sys_layout.addLayout(_inline_row("Target Size:", self.spin_size, 64))
 
-        layout.addWidget(isro_frame)
+        layout.addWidget(sys_frame)
 
         # ── SECTION 3: ATMOSPHERIC CONDITIONS ────────────────────────────────
         atmo_frame, atmo_layout = _section("ATMOSPHERIC CHANNEL")
@@ -368,7 +370,7 @@ class ControlPanelWidget(QWidget):
 
         # Salt & Pepper
         sp_row = QHBoxLayout()
-        self.chk_sp = QCheckBox("S&P Noise:")
+        self.chk_sp = QCheckBox("Salt & Pepper Noise:")
         self.chk_sp.setFont(get_label_font(size_pt=8))
         self.chk_sp.setChecked(self.config.enable_salt_pepper)
         self.chk_sp.toggled.connect(self._on_sp_toggled)

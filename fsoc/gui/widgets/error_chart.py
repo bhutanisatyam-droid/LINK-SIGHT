@@ -140,7 +140,7 @@ class TrackingErrorChartWidget(QWidget):
             painter.drawText(
                 QRectF(margin_l + 8.0, spec_y - 14.0, 180.0, 12.0),
                 Qt.AlignLeft,
-                "ISRO SPEC LIMIT: 10.0 px",
+                "SPEC LIMIT: 10.0 px",
             )
 
         # 5. Draw Live Tracking Error Polyline

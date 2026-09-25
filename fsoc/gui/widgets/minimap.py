@@ -162,16 +162,25 @@ class TopDownMinimapWidget(QWidget):
 
         painter.drawEllipse(tgt_pt, 3.5, 3.5)
 
-        # 6. Bottom Coordinates Callout
-        painter.setFont(self.font_mono)
-        painter.setPen(QColor(COLOR_TEXT_DIM))
+        # 6. Bottom Coordinates Callout with background pill
+        coord_font = get_mono_font(size_pt=7, bold=False)
+        painter.setFont(coord_font)
+        
+        coord_bg = QRectF(offset_x, offset_y + side - 16.0, side, 16.0)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(9, 12, 16, 220)))
+        painter.drawRect(coord_bg)
+        
+        painter.setPen(QColor(COLOR_TEXT_PRIMARY))
+        coord_str = f"TGT:({int(tgt_x)},{int(tgt_y)}) | CAM:({int(cam_x)},{int(cam_y)})"
         painter.drawText(
-            QRectF(offset_x + 4.0, offset_y + side - 16.0, side - 8.0, 14.0),
-            Qt.AlignLeft,
-            f"TGT: ({int(tgt_x)}, {int(tgt_y)}) | CAM: ({int(cam_x)}, {int(cam_y)})",
+            QRectF(offset_x + 4.0, offset_y + side - 15.0, side - 8.0, 14.0),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            coord_str,
         )
 
         # Outer border
         painter.setPen(QPen(QColor(COLOR_BORDER_LIGHT), 1.0))
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(map_rect)
+

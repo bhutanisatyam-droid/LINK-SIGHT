@@ -315,7 +315,7 @@ class TelemetryLogger:
 
         payload = {
             "metadata": {
-                "system": "ISRO FSOC Virtual Tracking System (Coarse ATP Stage)",
+                "system": "FSOC Virtual Tracking System (Coarse ATP Stage)",
                 "export_time": datetime.datetime.now().isoformat(),
                 "summary": snap,
             },

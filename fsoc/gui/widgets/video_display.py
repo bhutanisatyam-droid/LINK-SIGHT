@@ -318,10 +318,9 @@ class VideoDisplayWidget(QWidget):
         )
 
         # 8. Top-Left HUD Telemetry Overlay (Gimbal Coordinates + Benchmark Mode)
-        tele_x = offset_x + 12.0
-        tele_y = offset_y + 18.0
+        tele_x = offset_x + 10.0
+        tele_y = offset_y + 10.0
         painter.setFont(self.hud_font_small)
-        painter.setPen(QColor("#A0AEC0"))
 
         if out.ground_truth is not None:
             pan_deg, tilt_deg = out.ground_truth.cam_angles_deg
@@ -329,16 +328,35 @@ class VideoDisplayWidget(QWidget):
         else:
             gimbal_text = "MODE: BENCHMARK-2 (RAW FOOTAGE) | PTZ NO-OP"
 
-        painter.drawText(QPointF(tele_x, tele_y), gimbal_text)
+        fm_top = painter.fontMetrics()
+        top_pill_w = fm_top.horizontalAdvance(gimbal_text) + 16.0
+        painter.setPen(QPen(QColor("#1E293B"), 1.0))
+        painter.setBrush(QBrush(QColor(9, 12, 16, 220)))
+        painter.drawRoundedRect(QRectF(tele_x, tele_y, top_pill_w, 20.0), 3.0, 3.0)
 
-        # 9. Bottom-Left Target Metrics Overlay
-        bot_y = offset_y + render_h - 12.0
+        painter.setPen(QColor("#CBD5E1"))
+        painter.drawText(QRectF(tele_x + 8.0, tele_y, top_pill_w - 8.0, 20.0), Qt.AlignLeft | Qt.AlignVCenter, gimbal_text)
+
+        # 9. Bottom-Left Target Metrics Overlay (CONF, SNR, APERTURE)
         if det.detected:
             det_text = f"CONF: {det.confidence:.2f} | SNR: {det.snr_db:.1f} dB | APERTURE: {math.sqrt(det.area):.1f}px"
+            text_color = QColor("#38BDF8")  # Crisp vibrant light cyan
         else:
             det_text = f"CONF: 0.00 | COASTING FRAMES: {trk.consecutive_misses}"
+            text_color = QColor(COLOR_DEGRADED)
 
-        painter.drawText(QPointF(tele_x, bot_y), det_text)
+        fm_bot = painter.fontMetrics()
+        bot_pill_w = fm_bot.horizontalAdvance(det_text) + 16.0
+        bot_pill_h = 22.0
+        bot_pill_x = offset_x + 10.0
+        bot_pill_y = offset_y + render_h - bot_pill_h - 10.0
+
+        painter.setPen(QPen(QColor("#1E293B"), 1.0))
+        painter.setBrush(QBrush(QColor(9, 12, 16, 230)))
+        painter.drawRoundedRect(QRectF(bot_pill_x, bot_pill_y, bot_pill_w, bot_pill_h), 3.0, 3.0)
+
+        painter.setPen(text_color)
+        painter.drawText(QRectF(bot_pill_x + 8.0, bot_pill_y, bot_pill_w - 8.0, bot_pill_h), Qt.AlignLeft | Qt.AlignVCenter, det_text)
 
         # Hairline outer border around video viewport
         painter.setPen(QPen(QColor("#2B3648"), 1.0))
