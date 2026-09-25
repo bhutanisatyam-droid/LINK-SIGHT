@@ -112,6 +112,7 @@ class KalmanBeaconTracker(BaseTracker):
         self.consecutive_misses: int = 0
         self.track_age_frames: int = 0
         self.lost_confirm_count: int = 0
+        self._init_hits: int = 0
 
         self.reset()
 
@@ -123,6 +124,7 @@ class KalmanBeaconTracker(BaseTracker):
         self.consecutive_misses = 0
         self.track_age_frames = 0
         self.lost_confirm_count = 0
+        self._init_hits = 0
         self.state_history.clear()
         self.prev_pos = None
         self.ai_gru_active = False
@@ -177,26 +179,34 @@ class KalmanBeaconTracker(BaseTracker):
         self.P = F @ self.P @ F.T + Q
 
         # Check for valid measurement
-        has_detection = detection.detected and detection.confidence > 0.25
+        has_detection = detection.detected and detection.confidence >= 0.20
 
         if self.status == TrackStatus.INITIALIZING:
-            if has_detection and detection.confidence > 0.40:
-                # Direct initialization on solid detection
-                cx, cy = detection.centroid
-                self.x = np.array([[cx], [cy], [0.0], [0.0]], dtype=np.float64)
-                self.P = np.diag([25.0, 25.0, 10000.0, 10000.0]).astype(np.float64)
-                self.status = TrackStatus.TRACKING
-                self.consecutive_misses = 0
-                self.track_age_frames = 1
-                self.prev_pos = (cx, cy)
-                self.ai_gru_active = False
+            if has_detection:
+                self._init_hits += 1
+                if self._init_hits >= 2:
+                    # M-out-of-N confirmation (2 consecutive detections) to establish verified optical track
+                    cx, cy = detection.centroid
+                    self.x = np.array([[cx], [cy], [0.0], [0.0]], dtype=np.float64)
+                    self.P = np.diag([25.0, 25.0, 10000.0, 10000.0]).astype(np.float64)
+                    self.status = TrackStatus.TRACKING
+                    self.consecutive_misses = 0
+                    self.track_age_frames = 2
+                    self.prev_pos = (cx, cy)
+                    self.ai_gru_active = False
+                    self._init_hits = 0
+                else:
+                    # Tentative first hit: do not declare TRACKING yet
+                    self.status = TrackStatus.INITIALIZING
+                    return self._make_estimate(is_valid=False)
             else:
+                self._init_hits = 0
                 self.status = TrackStatus.INITIALIZING
                 self.ai_gru_active = False
                 return self._make_estimate(is_valid=False)
 
         elif self.status in (TrackStatus.TRACKING, TrackStatus.DEGRADED):
-            if has_detection and detection.confidence >= 0.50:
+            if has_detection:
                 z = np.array([[detection.centroid[0]], [detection.centroid[1]]], dtype=np.float64)
 
                 # Dynamic measurement noise scaled by detection confidence
@@ -212,9 +222,8 @@ class KalmanBeaconTracker(BaseTracker):
                     # Mahalanobis distance / Chi-squared gating
                     mahalanobis_sq = float((y.T @ S_inv @ y).item())
 
-                    # Tiered chi-squared gate:
-                    chi2_limit = 2500.0 if detection.confidence >= 0.45 else self.chi2_gate
-                    if mahalanobis_sq < chi2_limit:
+                    # Tiered chi-squared gate or direct optical re-lock:
+                    if mahalanobis_sq < 2500.0:
                         # Kalman gain
                         K = self.P @ self.H.T @ S_inv
 
@@ -240,8 +249,18 @@ class KalmanBeaconTracker(BaseTracker):
                             self.state_history.append(np.array([dx, dy, vx, vy], dtype=np.float32))
                         self.prev_pos = (pos_x, pos_y)
                         self.ai_gru_active = False
+                    elif detection.confidence >= 0.35:
+                        # Direct sub-second optical re-acquisition upon beam restoration
+                        cx, cy = detection.centroid
+                        self.x = np.array([[cx], [cy], [0.0], [0.0]], dtype=np.float64)
+                        self.P = np.diag([15.0, 15.0, 10000.0, 10000.0]).astype(np.float64)
+                        self.status = TrackStatus.TRACKING
+                        self.consecutive_misses = 0
+                        self.track_age_frames += 1
+                        self.prev_pos = (cx, cy)
+                        self.ai_gru_active = False
                     else:
-                        # Gated out: outlier clutter
+                        # Gated out: low confidence outlier clutter
                         self.consecutive_misses += 1
                 except np.linalg.LinAlgError:
                     self.consecutive_misses += 1
@@ -285,14 +304,13 @@ class KalmanBeaconTracker(BaseTracker):
                     self.x[3, 0] = 0.0
                 else:
                     self.status = TrackStatus.DEGRADED
-                    if self.consecutive_misses == 1:
-                        self.x[2, 0] = 0.0
-                        self.x[3, 0] = 0.0
+                    self.x[2, 0] *= 0.95
+                    self.x[3, 0] *= 0.95
 
         elif self.status == TrackStatus.LOST:
             self.ai_gru_active = False
             # Immediate sub-second re-lock upon verified optical detection
-            if has_detection and detection.confidence >= 0.40:
+            if has_detection and detection.confidence >= 0.20:
                 cx, cy = detection.centroid
                 self.x = np.array([[cx], [cy], [0.0], [0.0]], dtype=np.float64)
                 self.P = np.diag([15.0, 15.0, 10000.0, 10000.0]).astype(np.float64)

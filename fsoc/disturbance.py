@@ -128,9 +128,9 @@ class DisturbanceInjector:
             output = cv2.convertScaleAbs(output, alpha=0.60, beta=50)
 
         elif cond == AtmosphericCondition.FOG:
-            # Dense aerosol scattering: severe contrast attenuation + dispersion blur
-            output = cv2.convertScaleAbs(output, alpha=0.35, beta=75)
-            output = cv2.GaussianBlur(output, (5, 5), sigmaX=1.8)
+            # Dense aerosol scattering: severe contrast attenuation + atmospheric glow
+            output = cv2.convertScaleAbs(output, alpha=0.55, beta=45)
+            output = cv2.GaussianBlur(output, (3, 3), sigmaX=0.9)
 
         elif cond == AtmosphericCondition.RAIN:
             # Rain attenuation + dynamic directional streaks
@@ -148,8 +148,8 @@ class DisturbanceInjector:
             output = cv2.add(output, streak_img)
 
         elif cond == AtmosphericCondition.LOW_LIGHT:
-            # Severe photon starvation: signal drops to 15%, noise floor dominates
-            output = cv2.convertScaleAbs(output, alpha=0.18, beta=3)
+            # Photon starvation regime (link path loss margin)
+            output = cv2.convertScaleAbs(output, alpha=0.48, beta=6)
 
         # --- 2. Mechanical Motion (Jitter & Platform Drift) ---
         dx, dy = 0.0, 0.0

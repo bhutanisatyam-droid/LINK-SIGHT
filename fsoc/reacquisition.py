@@ -17,8 +17,8 @@ class CutHexagonalSpiralSearch:
 
     def __init__(
         self,
-        step_size_deg: float = 1.6,            # Step size with 60% camera FOV overlap
-        confidence_threshold: float = 0.30,    # Fast abort threshold on verified optical detection
+        step_size_deg: float = 1.3,            # Optimal step size with 65% camera FOV overlap
+        confidence_threshold: float = 0.20,    # Fast abort threshold on verified optical detection
         dwell_frames: int = 1,                 # Frames to hold pointing per waypoint
     ):
         self.step_size_deg = step_size_deg
@@ -37,45 +37,43 @@ class CutHexagonalSpiralSearch:
     def generate_angular_hex_pattern(
         self,
         center_deg: Tuple[float, float] = (0.0, 0.0),
-        max_radius_deg: float = 5.8,
+        max_radius_deg: float = 3.6,
     ) -> List[Tuple[float, float]]:
         """Generate ordered hexagonal spiral waypoints in gimbal angular space (degrees)."""
         cx, cy = center_deg
-        # Clamp center within physical gimbal limits
-        cx = max(-5.0, min(5.0, cx))
-        cy = max(-5.0, min(5.0, cy))
-        pts: List[Tuple[float, float]] = [(cx, cy)]  # Center point is always first
+        cx = max(-4.5, min(4.5, cx))
+        cy = max(-4.5, min(4.5, cy))
+        pts: List[Tuple[float, float]] = [(cx, cy)]
 
         s = self.step_size_deg
         max_rings = max(1, int(math.ceil(max_radius_deg / s)))
 
-        # 6 unit directions for hexagonal lattice (60-degree increments)
-        hex_dirs = [
-            (s * math.cos(i * math.pi / 3.0), s * math.sin(i * math.pi / 3.0))
-            for i in range(6)
-        ]
-
-        for ring in range(1, max_rings + 1):
-            curr_x = cx + ring * hex_dirs[4][0]
-            curr_y = cy + ring * hex_dirs[4][1]
-
-            for side in range(6):
-                step_dir = hex_dirs[(side + 2) % 6]
-                for _ in range(ring):
-                    dist = math.hypot(curr_x - cx, curr_y - cy)
+        for r in range(1, max_rings + 1):
+            # 6 vertices of hexagon at radius r * s
+            verts = [
+                (cx + r * s * math.cos(math.radians(60 * i)),
+                 cy + r * s * math.sin(math.radians(60 * i)))
+                for i in range(6)
+            ]
+            for i in range(6):
+                v1 = verts[i]
+                v2 = verts[(i + 1) % 6]
+                for k in range(r):
+                    px = v1[0] + (k / r) * (v2[0] - v1[0])
+                    py = v1[1] + (k / r) * (v2[1] - v1[1])
+                    dist = math.hypot(px - cx, py - cy)
                     if dist <= max_radius_deg + 1e-4:
-                        clamped_x = max(-5.8, min(5.8, curr_x))
-                        clamped_y = max(-5.8, min(5.8, curr_y))
-                        pts.append((clamped_x, clamped_y))
-                    curr_x += step_dir[0]
-                    curr_y += step_dir[1]
+                        if -5.0 <= px <= 5.0 and -5.0 <= py <= 5.0:
+                            pts.append((round(px, 3), round(py, 3)))
 
+        if not pts:
+            pts.append((cx, cy))
         return pts
 
     def start_search(
         self,
         center_deg: Tuple[float, float] = (0.0, 0.0),
-        max_radius_deg: float = 5.8,
+        max_radius_deg: float = 3.6,
         initial_radius_deg: Optional[float] = None,
     ) -> None:
         """Initiate cut hexagonal spiral re-acquisition search centered at last known position or home."""
@@ -126,8 +124,8 @@ class CutHexagonalSpiralSearch:
         err_dist = math.hypot(wp[0] - cam_pan_deg, wp[1] - cam_tilt_deg)
 
         self.current_dwell += 1
-        # Advance to next waypoint if reached within 0.60 deg or dwelled for 20 frames (~0.6s)
-        if err_dist < 0.60 or self.current_dwell >= 20:
+        # Continuous smooth slew: advance to next waypoint when within 0.60 deg or dwelled for 3 frames (~0.1s)
+        if err_dist < 0.60 or self.current_dwell >= 3:
             self.current_dwell = 0
             self.current_idx = (self.current_idx + 1) % len(self.waypoints_deg)
 

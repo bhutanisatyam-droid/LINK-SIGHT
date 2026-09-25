@@ -206,7 +206,7 @@ class MainWindow(QMainWindow):
         self.control_panel.run_clicked.connect(lambda: self.worker.set_paused(False))
         self.control_panel.pause_clicked.connect(lambda: self.worker.set_paused(True))
         self.control_panel.reset_clicked.connect(self.worker.request_reset)
-        self.control_panel.occlude_clicked.connect(lambda: self.worker.request_occlusion(35))
+        self.control_panel.occlude_clicked.connect(lambda: self.worker.request_occlusion(18))
 
         # Parameter controls
         self.control_panel.motion_model_changed.connect(self.worker.request_motion_model)

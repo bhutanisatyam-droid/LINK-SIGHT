@@ -54,7 +54,7 @@ from fsoc.gui.theme import (
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _inline_row(label_text: str, widget: QWidget, label_w: int = 72) -> QHBoxLayout:
+def _inline_row(label_text: str, widget: QWidget, label_w: int = 60) -> QHBoxLayout:
     """Return an HBoxLayout with a fixed-width label + widget on the same line."""
     row = QHBoxLayout()
     row.setSpacing(4)
@@ -73,8 +73,8 @@ def _section(title: str) -> tuple[QFrame, QVBoxLayout]:
     frame = QFrame()
     frame.setObjectName("SectionFrame")
     lay = QVBoxLayout(frame)
-    lay.setContentsMargins(5, 4, 5, 4)
-    lay.setSpacing(3)
+    lay.setContentsMargins(4, 3, 4, 3)
+    lay.setSpacing(2)
     hdr = QLabel(title)
     hdr.setObjectName("SectionHeader")
     lay.addWidget(hdr)
@@ -107,7 +107,7 @@ class ControlPanelWidget(QWidget):
     def __init__(self, disturbance_config: DisturbanceConfig, parent=None):
         super().__init__(parent)
         self.config = disturbance_config
-        self.setFixedWidth(320)
+        self.setFixedWidth(410)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -119,8 +119,8 @@ class ControlPanelWidget(QWidget):
 
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(3, 3, 3, 3)
+        layout.setSpacing(3)
 
         # ── SECTION 1: MISSION EXECUTION ─────────────────────────────────────
         exec_frame, exec_layout = _section("MISSION EXECUTION")
@@ -173,11 +173,12 @@ class ControlPanelWidget(QWidget):
         fov_lbl = QLabel("Camera FOV:")
         fov_lbl.setFont(get_label_font(size_pt=8))
         fov_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
-        fov_lbl.setFixedWidth(72)
+        fov_lbl.setFixedWidth(64)
         fov_row.addWidget(fov_lbl)
 
         self.spin_fov_pan = QDoubleSpinBox()
         self.spin_fov_pan.setRange(1.0, 12.0)
+        self.spin_fov_pan.setDecimals(1)
         self.spin_fov_pan.setValue(4.0)
         self.spin_fov_pan.setSingleStep(0.5)
         self.spin_fov_pan.setPrefix("Pan ")
@@ -186,6 +187,7 @@ class ControlPanelWidget(QWidget):
 
         self.spin_fov_tilt = QDoubleSpinBox()
         self.spin_fov_tilt.setRange(1.0, 9.0)
+        self.spin_fov_tilt.setDecimals(1)
         self.spin_fov_tilt.setValue(3.0)
         self.spin_fov_tilt.setSingleStep(0.5)
         self.spin_fov_tilt.setPrefix("Tilt ")
@@ -202,7 +204,7 @@ class ControlPanelWidget(QWidget):
         self.combo_shape.addItem("Circle", TargetShape.CIRCLE)
         self.combo_shape.addItem("Cross (+)", TargetShape.CROSS)
         self.combo_shape.currentIndexChanged.connect(self._on_shape_changed)
-        isro_layout.addLayout(_inline_row("Spot Shape:", self.combo_shape))
+        isro_layout.addLayout(_inline_row("Spot Shape:", self.combo_shape, 64))
 
         # Trajectory
         self.combo_motion = QComboBox()
@@ -211,14 +213,14 @@ class ControlPanelWidget(QWidget):
         self.combo_motion.addItem("Figure-8", MotionModel.FIGURE_8)
         self.combo_motion.addItem("Random Walk", MotionModel.RANDOM)
         self.combo_motion.currentIndexChanged.connect(self._on_motion_changed)
-        isro_layout.addLayout(_inline_row("Trajectory:", self.combo_motion))
+        isro_layout.addLayout(_inline_row("Trajectory:", self.combo_motion, 64))
 
         # Initial Target Location
         self.combo_initpos = QComboBox()
         self.combo_initpos.addItem("Random (ISRO Default)", "random")
         self.combo_initpos.addItem("Custom Coordinates", "custom")
         self.combo_initpos.currentIndexChanged.connect(self._on_initpos_changed)
-        isro_layout.addLayout(_inline_row("Init. Pos:", self.combo_initpos))
+        isro_layout.addLayout(_inline_row("Init. Pos:", self.combo_initpos, 64))
 
         # Coordinates X & Y side-by-side on 1 row
         xy_row = QHBoxLayout()
@@ -226,11 +228,12 @@ class ControlPanelWidget(QWidget):
         xy_lbl = QLabel("Spawn (X,Y):")
         xy_lbl.setFont(get_label_font(size_pt=8))
         xy_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
-        xy_lbl.setFixedWidth(72)
+        xy_lbl.setFixedWidth(64)
         xy_row.addWidget(xy_lbl)
 
         self.spin_custom_x = QDoubleSpinBox()
         self.spin_custom_x.setRange(100.0, 1900.0)
+        self.spin_custom_x.setDecimals(0)
         self.spin_custom_x.setValue(1000.0)
         self.spin_custom_x.setSingleStep(50.0)
         self.spin_custom_x.setPrefix("X ")
@@ -240,6 +243,7 @@ class ControlPanelWidget(QWidget):
 
         self.spin_custom_y = QDoubleSpinBox()
         self.spin_custom_y.setRange(100.0, 1900.0)
+        self.spin_custom_y.setDecimals(0)
         self.spin_custom_y.setValue(1000.0)
         self.spin_custom_y.setSingleStep(50.0)
         self.spin_custom_y.setPrefix("Y ")
@@ -281,11 +285,12 @@ class ControlPanelWidget(QWidget):
         spd_lbl = QLabel("Slew Rate:")
         spd_lbl.setFont(get_label_font(size_pt=8))
         spd_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
-        spd_lbl.setFixedWidth(72)
+        spd_lbl.setFixedWidth(64)
         speed_row.addWidget(spd_lbl)
 
         self.spin_pan_speed = QDoubleSpinBox()
         self.spin_pan_speed.setRange(1.0, 10.0)
+        self.spin_pan_speed.setDecimals(1)
         self.spin_pan_speed.setValue(5.0)
         self.spin_pan_speed.setSingleStep(0.5)
         self.spin_pan_speed.setPrefix("Pan ")
@@ -294,6 +299,7 @@ class ControlPanelWidget(QWidget):
 
         self.spin_tilt_speed = QDoubleSpinBox()
         self.spin_tilt_speed.setRange(1.0, 10.0)
+        self.spin_tilt_speed.setDecimals(1)
         self.spin_tilt_speed.setValue(5.0)
         self.spin_tilt_speed.setSingleStep(0.5)
         self.spin_tilt_speed.setPrefix("Tilt ")
@@ -310,7 +316,7 @@ class ControlPanelWidget(QWidget):
         self.spin_size.setValue(10)
         self.spin_size.setSuffix(" px")
         self.spin_size.valueChanged.connect(self.target_size_changed.emit)
-        isro_layout.addLayout(_inline_row("Target Size:", self.spin_size))
+        isro_layout.addLayout(_inline_row("Target Size:", self.spin_size, 64))
 
         layout.addWidget(isro_frame)
 

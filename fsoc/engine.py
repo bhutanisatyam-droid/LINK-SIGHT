@@ -80,6 +80,8 @@ class TrackingPipeline:
         self._unacquired_frames: int = 0  # Counts initial frames without lock before triggering search
         self._last_target_pan_deg: float = 0.0
         self._last_target_tilt_deg: float = 0.0
+        self._rf_coarse_in_progress: bool = False
+        self._spiral_search_frames: int = 0
 
     def set_motion_model(self, model: MotionModel) -> None:
         """Change trajectory of simulated beacon."""
@@ -154,6 +156,10 @@ class TrackingPipeline:
         """Configure RF side-link simulation (ISRO coarse handoff model)."""
         if isinstance(self.frame_source, SimulatorFrameSource):
             self.frame_source.set_rf_link(active, uncertainty_px)
+            self._rf_coarse_in_progress = active
+            if active:
+                self.reacquisition.stop_search()
+                self._unacquired_frames = 0
             status = f"ACTIVE (σ={uncertainty_px:.0f}px)" if active else "DISABLED"
             self.logger.log_event("CONFIG_CHANGE", f"RF Side-Link: {status}")
 
@@ -190,12 +196,21 @@ class TrackingPipeline:
         self._unacquired_frames = 0
         self._last_target_pan_deg = 0.0
         self._last_target_tilt_deg = 0.0
+        self._rf_coarse_in_progress = getattr(self.frame_source, 'rf_link_active', False)
+        self._spiral_search_frames = 0
         self.last_step_time = time.perf_counter()
 
-    def trigger_occlusion(self, duration_frames: int = 35) -> None:
-        """Inject complete beam blockage / dark frame for testing re-acquisition."""
+    def trigger_occlusion(self, duration_frames: int = 15) -> None:
+        """Inject optical beacon blockage / beam break for testing re-acquisition."""
         self.forced_occlusion_frames = duration_frames
+        now = time.perf_counter()
+        with self.logger.lock:
+            if self.logger.loss_start_time is None and self.logger.first_lock_time is not None:
+                self.logger.loss_start_time = now
+                self.logger.loss_event_count += 1
         self.logger.log_event("BEAM_BREAK", f"Injected simulated beam break ({duration_frames} frames)")
+        if hasattr(self.frame_source, "set_beam_occluded"):
+            self.frame_source.set_beam_occluded(duration_frames)
 
     def process_frame(self) -> EngineOutput:
         """Execute one complete tracking cycle at >= 30Hz."""
@@ -208,10 +223,9 @@ class TrackingPipeline:
         frame = self.frame_source.get_frame()
         if self.forced_occlusion_frames > 0:
             self.forced_occlusion_frames -= 1
-            frame = np.full_like(frame, 14)
             if self.forced_occlusion_frames == 0:
                 self.logger.loss_start_time = time.perf_counter()
-                self.logger.log_event("BEAM_RESTORED", "Beam blockage cleared, measuring re-acquisition lock time")
+                self.logger.log_event("BEAM_RESTORED", "Beam blockage cleared, acquiring optical beacon")
 
         # 2. Detect optical beacon using classical CV
         detection = self.detector.detect(frame)
@@ -221,128 +235,169 @@ class TrackingPipeline:
         active_wp_idx: int = 0
         status_label: str = "INITIALIZING"
 
-        if self.reacquisition.is_active:
-            # Cut hexagonal spiral search is currently executing
-            active_wp_idx = self.reacquisition.get_current_waypoint_index()
+        track = self.tracker.update(detection, dt)
 
-            # Advance search step: returns target gimbal angles (target_pan_deg, target_tilt_deg)
+        if track.status == TrackStatus.TRACKING:
+            # Verified optical lock established! Terminate initial RF coarse handoff
+            self._rf_coarse_in_progress = False
+            self._spiral_search_frames = 0
+            self._lost_frames = 0
+            self._unacquired_frames = 0
+            self.reacquisition.stop_search()
+            status_label = "TRACKING [LOCKED]"
+
+            # Record last known target gimbal angles
             cam_p = getattr(self.frame_source, 'pan_deg', 0.0)
             cam_t = getattr(self.frame_source, 'tilt_deg', 0.0)
-            wp = self.reacquisition.step(detection.confidence, cam_p, cam_t)
+            pxd_x = getattr(self.frame_source, 'px_per_deg_x', 160.0)
+            pxd_y = getattr(self.frame_source, 'px_per_deg_y', 160.0)
+            self._last_target_pan_deg = cam_p + (track.pos[0] - 320.0) / pxd_x
+            self._last_target_tilt_deg = cam_t + (track.pos[1] - 240.0) / pxd_y
 
-            if wp is not None:
-                target_pan_deg, target_tilt_deg = wp
-                if hasattr(self.frame_source, 'pan_deg') and hasattr(self.frame_source, 'tilt_deg'):
-                    err_pan = target_pan_deg - self.frame_source.pan_deg
-                    err_tilt = target_tilt_deg - self.frame_source.tilt_deg
+            # Close the loop using Kalman filtered state + velocity feedforward
+            pan_rate, tilt_rate = self.controller.compute_command(
+                target_pos=track.pos, dt=dt, target_vel=track.vel
+            )
+            self._last_pan_rate = pan_rate
+            self._last_tilt_rate = tilt_rate
+            self.frame_source.apply_ptz_velocity(pan_rate, tilt_rate, dt)
+
+        elif self._rf_coarse_in_progress:
+            # Stage 1: Initial Coarse Pointing Slew towards RF handoff coordinates (startup / reset only)
+            self.reacquisition.stop_search()
+            self._unacquired_frames = 0
+            rf_target = getattr(self.frame_source, 'rf_target_angles_deg', None)
+            if rf_target is None and hasattr(self.frame_source, 'get_rf_target_angles'):
+                rf_target = self.frame_source.get_rf_target_angles()
+                self.frame_source.rf_target_angles_deg = rf_target
+
+            if rf_target is not None:
+                target_pan_deg, target_tilt_deg = rf_target
+                cam_p = getattr(self.frame_source, 'pan_deg', 0.0)
+                cam_t = getattr(self.frame_source, 'tilt_deg', 0.0)
+                err_pan = target_pan_deg - cam_p
+                err_tilt = target_tilt_deg - cam_t
+                dist = math.hypot(err_pan, err_tilt)
+
+                if dist > 0.15:
                     max_pan_spd = getattr(self.frame_source, 'max_pan_speed_deg_s', getattr(self.frame_source, 'max_ptz_speed_deg_s', 8.0))
                     max_tilt_spd = getattr(self.frame_source, 'max_tilt_speed_deg_s', getattr(self.frame_source, 'max_ptz_speed_deg_s', 8.0))
                     pan_rate = max(-max_pan_spd, min(max_pan_spd, err_pan * 8.0))
                     tilt_rate = max(-max_tilt_spd, min(max_tilt_spd, err_tilt * 8.0))
+                    self._last_pan_rate = pan_rate
+                    self._last_tilt_rate = tilt_rate
                     self.frame_source.apply_ptz_velocity(pan_rate, tilt_rate, dt)
                     self.controller.integral_x = 0.0
                     self.controller.integral_y = 0.0
-
-                # Update tracker with candidate measurement
-                track = self.tracker.update(detection, dt)
-                status_label = "ACQUIRING [SPIRAL SEARCH]"
-            else:
-                # Re-acquisition succeeded! Immediately lock and track
-                track = self.tracker.update(detection, dt)
-                self._unacquired_frames = 0
-                if track.status == TrackStatus.TRACKING:
-                    status_label = "TRACKING [LOCKED]"
-                    pan_rate, tilt_rate = self.controller.compute_command(
-                        target_pos=track.pos, dt=dt, target_vel=track.vel
-                    )
-                    self.frame_source.apply_ptz_velocity(pan_rate, tilt_rate, dt)
+                    status_label = "RF COARSE POINTING [SLEW]"
                 else:
+                    # Arrived at RF coarse basket: hand off to optical acquisition
+                    self._rf_coarse_in_progress = False
+                    status_label = "ACQUIRING"
+            else:
+                self._rf_coarse_in_progress = False
+                status_label = "ACQUIRING"
+
+        elif track.status == TrackStatus.DEGRADED:
+            # Optical occlusion / beam break: coast on Kalman / MicroGRU prediction
+            if track.ai_gru_active:
+                status_label = "DEGRADED [MICRO-GRU COASTING]"
+            else:
+                status_label = "DEGRADED [COASTING]"
+            # Coast gimbal using predicted target trajectory position & damped velocity
+            if 0 <= track.pos[0] <= 640 and 0 <= track.pos[1] <= 480:
+                pan_rate, tilt_rate = self.controller.compute_command(
+                    target_pos=track.pos, dt=dt, target_vel=(track.vel[0] * 0.4, track.vel[1] * 0.4)
+                )
+            else:
+                pan_rate, tilt_rate = 0.0, 0.0
+            self.frame_source.apply_ptz_velocity(pan_rate, tilt_rate, dt)
+
+        elif self.reacquisition.is_active:
+            self._spiral_search_frames += 1
+            # If spiral search has searched for >= 75 frames (~2.5s) without re-acquiring, fall back to RF coordinates
+            if self._spiral_search_frames >= 75 and getattr(self.frame_source, 'rf_link_active', False):
+                self.reacquisition.stop_search()
+                self._rf_coarse_in_progress = True
+                self._spiral_search_frames = 0
+                if hasattr(self.frame_source, 'get_rf_target_angles'):
+                    self.frame_source.rf_target_angles_deg = self.frame_source.get_rf_target_angles()
+                self.logger.log_event("RF_FALLBACK", "Spiral search timed out (2.5s); re-querying RF coarse coordinates")
+                status_label = "RF RE-ACQUISITION [SLEW]"
+            else:
+                # Cut hexagonal spiral search is currently executing
+                active_wp_idx = self.reacquisition.get_current_waypoint_index()
+                cam_p = getattr(self.frame_source, 'pan_deg', 0.0)
+                cam_t = getattr(self.frame_source, 'tilt_deg', 0.0)
+                wp = self.reacquisition.step(detection.confidence, cam_p, cam_t)
+
+                if wp is not None:
+                    target_pan_deg, target_tilt_deg = wp
+                    if hasattr(self.frame_source, 'pan_deg') and hasattr(self.frame_source, 'tilt_deg'):
+                        err_pan = target_pan_deg - self.frame_source.pan_deg
+                        err_tilt = target_tilt_deg - self.frame_source.tilt_deg
+                        max_pan_spd = getattr(self.frame_source, 'max_pan_speed_deg_s', getattr(self.frame_source, 'max_ptz_speed_deg_s', 8.0))
+                        max_tilt_spd = getattr(self.frame_source, 'max_tilt_speed_deg_s', getattr(self.frame_source, 'max_ptz_speed_deg_s', 8.0))
+                        pan_rate = max(-max_pan_spd, min(max_pan_spd, err_pan * 8.0))
+                        tilt_rate = max(-max_tilt_spd, min(max_tilt_spd, err_tilt * 8.0))
+                        self.frame_source.apply_ptz_velocity(pan_rate, tilt_rate, dt)
+                        self.controller.integral_x = 0.0
+                        self.controller.integral_y = 0.0
+                    status_label = "ACQUIRING [SPIRAL SEARCH]"
+                else:
+                    self._spiral_search_frames = 0
                     status_label = "RE-ACQUIRED"
 
-            # Convert angular waypoints to pixel coordinates on current frame for HUD
-            pxd_x = getattr(self.frame_source, 'px_per_deg_x', 160.0)
-            pxd_y = getattr(self.frame_source, 'px_per_deg_y', 160.0)
+                pxd_x = getattr(self.frame_source, 'px_per_deg_x', 160.0)
+                pxd_y = getattr(self.frame_source, 'px_per_deg_y', 160.0)
+                cam_p = getattr(self.frame_source, 'pan_deg', 0.0)
+                cam_t = getattr(self.frame_source, 'tilt_deg', 0.0)
+                search_waypoints = [
+                    (320.0 + (wp_p - cam_p) * pxd_x, 240.0 + (wp_t - cam_t) * pxd_y)
+                    for wp_p, wp_t in self.reacquisition.get_waypoints_deg()
+                ]
+
+        elif track.status == TrackStatus.LOST:
+            self._lost_frames += 1
+            if self._lost_frames > 60:
+                self._lost_frames = 0
+                self.tracker.x = np.array([[320.0], [240.0], [0.0], [0.0]], dtype=np.float64)
+                self.tracker.P = np.diag([2500.0, 2500.0, 10000.0, 10000.0]).astype(np.float64)
+                self.tracker.consecutive_misses = 0
+
+            status_label = "LOST [INIT SEARCH]"
             cam_p = getattr(self.frame_source, 'pan_deg', 0.0)
             cam_t = getattr(self.frame_source, 'tilt_deg', 0.0)
+            pxd_x = getattr(self.frame_source, 'px_per_deg_x', 160.0)
+            pxd_y = getattr(self.frame_source, 'px_per_deg_y', 160.0)
+
+            # Initiate cut hexagonal spiral search starting at last known position
+            start_center = (self._last_target_pan_deg, self._last_target_tilt_deg)
+            self.reacquisition.start_search(center_deg=start_center, max_radius_deg=5.8, initial_radius_deg=1.6)
             search_waypoints = [
                 (320.0 + (wp_p - cam_p) * pxd_x, 240.0 + (wp_t - cam_t) * pxd_y)
                 for wp_p, wp_t in self.reacquisition.get_waypoints_deg()
             ]
+            active_wp_idx = self.reacquisition.get_current_waypoint_index()
+
         else:
-            # Normal state estimation step
-            track = self.tracker.update(detection, dt)
-
-            if track.status == TrackStatus.TRACKING:
-                self._lost_frames = 0
-                self._unacquired_frames = 0
-                status_label = "TRACKING [LOCKED]"
-
-                # Record last known target gimbal angles
+            # TrackStatus.INITIALIZING: Optical target not yet in FOV
+            self._unacquired_frames += 1
+            if self._unacquired_frames >= 4:
                 cam_p = getattr(self.frame_source, 'pan_deg', 0.0)
                 cam_t = getattr(self.frame_source, 'tilt_deg', 0.0)
                 pxd_x = getattr(self.frame_source, 'px_per_deg_x', 160.0)
                 pxd_y = getattr(self.frame_source, 'px_per_deg_y', 160.0)
-                self._last_target_pan_deg = cam_p + (track.pos[0] - 320.0) / pxd_x
-                self._last_target_tilt_deg = cam_t + (track.pos[1] - 240.0) / pxd_y
-
-                # Close the loop using Kalman filtered state + velocity feedforward
-                pan_rate, tilt_rate = self.controller.compute_command(
-                    target_pos=track.pos, dt=dt, target_vel=track.vel
-                )
-                self.frame_source.apply_ptz_velocity(pan_rate, tilt_rate, dt)
-
-            elif track.status == TrackStatus.DEGRADED:
-                status_label = "DEGRADED [COASTING]"
-                # Coast gimbal with damped velocity, clamp if predicted position is off-screen
-                if 0 <= track.pos[0] <= 640 and 0 <= track.pos[1] <= 480:
-                    pan_rate, tilt_rate = self.controller.compute_command(
-                        target_pos=track.pos, dt=dt, target_vel=(track.vel[0] * 0.4, track.vel[1] * 0.4)
-                    )
-                else:
-                    pan_rate, tilt_rate = 0.0, 0.0
-                self.frame_source.apply_ptz_velocity(pan_rate, tilt_rate, dt)
-
-            elif track.status == TrackStatus.LOST:
-                self._lost_frames += 1
-                if self._lost_frames > 60:
-                    self._lost_frames = 0
-                    self.tracker.x = np.array([[320.0], [240.0], [0.0], [0.0]], dtype=np.float64)
-                    self.tracker.P = np.diag([2500.0, 2500.0, 10000.0, 10000.0]).astype(np.float64)
-                    self.tracker.consecutive_misses = 0
-
-                status_label = "LOST [INIT SEARCH]"
-                cam_p = getattr(self.frame_source, 'pan_deg', 0.0)
-                cam_t = getattr(self.frame_source, 'tilt_deg', 0.0)
-                pxd_x = getattr(self.frame_source, 'px_per_deg_x', 160.0)
-                pxd_y = getattr(self.frame_source, 'px_per_deg_y', 160.0)
-
-                # Initiate cut hexagonal spiral search starting at last known position or current camera center
-                start_center = (self._last_target_pan_deg, self._last_target_tilt_deg)
-                self.reacquisition.start_search(center_deg=start_center, max_radius_deg=5.8, initial_radius_deg=1.6)
+                start_center = (cam_p, cam_t) if getattr(self.frame_source, 'rf_link_active', False) else (0.0, 0.0)
+                self.reacquisition.start_search(center_deg=start_center, max_radius_deg=4.8)
                 search_waypoints = [
                     (320.0 + (wp_p - cam_p) * pxd_x, 240.0 + (wp_t - cam_t) * pxd_y)
                     for wp_p, wp_t in self.reacquisition.get_waypoints_deg()
                 ]
                 active_wp_idx = self.reacquisition.get_current_waypoint_index()
+                status_label = "ACQUIRING [SPIRAL SEARCH]"
             else:
-                # TrackStatus.INITIALIZING: Target not locked in FOV
-                self._unacquired_frames += 1
-                if self._unacquired_frames >= 4:
-                    # Target starts off-center -> Autonomously sweep uncertainty zone with Cut Hexagonal Spiral
-                    cam_p = getattr(self.frame_source, 'pan_deg', 0.0)
-                    cam_t = getattr(self.frame_source, 'tilt_deg', 0.0)
-                    pxd_x = getattr(self.frame_source, 'px_per_deg_x', 160.0)
-                    pxd_y = getattr(self.frame_source, 'px_per_deg_y', 160.0)
-                    start_center = (cam_p, cam_t)
-                    self.reacquisition.start_search(center_deg=start_center, max_radius_deg=5.8, initial_radius_deg=1.6)
-                    search_waypoints = [
-                        (320.0 + (wp_p - cam_p) * pxd_x, 240.0 + (wp_t - cam_t) * pxd_y)
-                        for wp_p, wp_t in self.reacquisition.get_waypoints_deg()
-                    ]
-                    active_wp_idx = self.reacquisition.get_current_waypoint_index()
-                    status_label = "ACQUIRING [SPIRAL SEARCH]"
-                else:
-                    status_label = "ACQUIRING"
+                status_label = "ACQUIRING"
 
         # 4. Tracking Error Vector Calculation (from reticle dead-center)
         if track.is_valid:

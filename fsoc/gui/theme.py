@@ -72,7 +72,7 @@ QFrame#SectionFrame {{
     background-color: {COLOR_SURFACE_2};
     border: 1px solid {COLOR_BORDER};
     border-radius: 2px;
-    padding: 6px;
+    padding: 3px;
 }}
 
 /* Headers and section titles */
@@ -92,7 +92,7 @@ QLabel#SectionHeader {{
     letter-spacing: 1px;
     padding-bottom: 2px;
     border-bottom: 1px solid {COLOR_BORDER};
-    margin-bottom: 4px;
+    margin-bottom: 3px;
 }}
 
 /* Push Buttons */
@@ -101,9 +101,9 @@ QPushButton {{
     color: {COLOR_TEXT_PRIMARY};
     border: 1px solid {COLOR_BORDER_LIGHT};
     border-radius: 2px;
-    padding: 5px 12px;
+    padding: 3px 6px;
     font-family: 'Consolas', monospace;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: bold;
 }}
 
@@ -159,9 +159,9 @@ QComboBox {{
     color: {COLOR_TEXT_PRIMARY};
     border: 1px solid {COLOR_BORDER};
     border-radius: 2px;
-    padding: 3px 8px;
+    padding: 2px 4px;
     font-family: 'Consolas', monospace;
-    font-size: 11px;
+    font-size: 10px;
 }}
 
 QComboBox:hover {{
@@ -170,7 +170,7 @@ QComboBox:hover {{
 
 QComboBox::drop-down {{
     border: none;
-    width: 18px;
+    width: 16px;
 }}
 
 QComboBox QAbstractItemView {{
@@ -208,13 +208,13 @@ QSlider::handle:horizontal:hover {{
 /* CheckBoxes */
 QCheckBox {{
     color: {COLOR_TEXT_PRIMARY};
-    font-size: 11px;
-    spacing: 6px;
+    font-size: 10px;
+    spacing: 4px;
 }}
 
 QCheckBox::indicator {{
-    width: 12px;
-    height: 12px;
+    width: 11px;
+    height: 11px;
     background-color: {COLOR_SURFACE_INPUT};
     border: 1px solid {COLOR_BORDER};
     border-radius: 2px;
@@ -235,9 +235,9 @@ QSpinBox, QDoubleSpinBox {{
     color: {COLOR_TEXT_PRIMARY};
     border: 1px solid {COLOR_BORDER};
     border-radius: 2px;
-    padding: 3px 6px;
+    padding: 2px 3px;
     font-family: 'Consolas', monospace;
-    font-size: 11px;
+    font-size: 10px;
 }}
 
 /* ScrollBars */

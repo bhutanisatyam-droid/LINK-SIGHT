@@ -99,7 +99,7 @@ class ClassicalBeaconDetector(BaseDetector):
         pass
 
     def detect(self, frame: np.ndarray) -> DetectionResult:
-        """Execute robust multi-stage detection pipeline."""
+        """Execute robust multi-stage detection pipeline with adaptive local background discrimination."""
         if frame is None or frame.size == 0:
             return self._null_result
 
@@ -109,70 +109,113 @@ class ClassicalBeaconDetector(BaseDetector):
         else:
             gray = frame
 
-        # Stage 1: 5x5 Median filtering for complete salt-and-pepper & impulse noise suppression
+        h_img, w_img = gray.shape[:2]
+
+        # Stage 1: 5x5 Median filtering for impulse & salt-and-pepper noise suppression
         filtered = cv2.medianBlur(gray, 5)
 
-        # Stage 2: Morphological Top-Hat Transform (Strips away low-frequency daytime solar background)
+        # Stage 2: Global Raw Background Noise Floor
+        raw_mean, raw_std = cv2.meanStdDev(filtered)
+        bg_mu = float(raw_mean[0][0])
+        bg_sigma = float(raw_std[0][0])
+
+        # Stage 3: Morphological Top-Hat Transform (Strips away low-frequency daytime solar background)
         tophat = cv2.morphologyEx(filtered, cv2.MORPH_TOPHAT, self.tophat_kernel)
 
-        # Stage 3: Statistical Background & Dynamic Threshold Estimation (CFAR 3.2*sigma)
-        bg_mean, bg_std = cv2.meanStdDev(tophat)
-        mu = float(bg_mean[0][0])
-        sigma = float(bg_std[0][0])
+        # Zero-out frame perimeter (18px) to suppress warpAffine translation & jitter edge boundary artifacts
+        tophat[:18, :] = 0
+        tophat[-18:, :] = 0
+        tophat[:, :18] = 0
+        tophat[:, -18:] = 0
 
-        # Dynamic threshold: adaptive to solar background noise floor with CFAR rejection
-        thresh_val = max(mu + 4.0 * max(sigma, 1.0), 28.0)
-        thresh_val = min(thresh_val, 160.0)
+        # Stage 4: Statistical TopHat Noise Floor & Dynamic Threshold
+        top_mean, top_std = cv2.meanStdDev(tophat)
+        t_mu = float(top_mean[0][0])
+        t_sigma = float(top_std[0][0])
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(tophat)
 
+        thresh_val = max(t_mu + 2.5 * max(t_sigma, 1.0), 16.0)
         _, thresh = cv2.threshold(tophat, int(thresh_val), 255, cv2.THRESH_BINARY)
 
-        # Stage 4: Contour / Connected Component Extraction
+        # Stage 5: Contour / Connected Component Extraction
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return self._null_result
 
-        candidates: List[DetectionResult] = []
+        candidates = []
         for c in contours:
             x, y, w, h = cv2.boundingRect(c)
-            if w <= 0 or h <= 0:
+            if w < 5 or h < 5:
                 continue
 
-            # Reject frame border artifacts (induced by jitter translations and ambient sky radiance)
-            if x <= 3 or y <= 3 or x + w >= 637 or y + h >= 477:
+            # Reject frame border artifacts
+            if x <= 18 or y <= 18 or x + w >= w_img - 18 or y + h >= h_img - 18:
                 continue
 
             bounding_area = float(w * h)
-            if bounding_area < 16.0 or bounding_area > self.max_area:
-                continue
-
-            if w < 4 or h < 4:
+            if bounding_area < 28.0 or bounding_area > self.max_area:
                 continue
 
             aspect = float(w) / float(h)
-            if aspect < self.min_aspect_ratio or aspect > self.max_aspect_ratio:
+            if aspect < 0.38 or aspect > 2.65:
                 continue
 
             contour_area = cv2.contourArea(c)
-            perimeter = cv2.arcLength(c, True)
-            circularity = (4.0 * np.pi * contour_area) / (perimeter * perimeter + 1e-6) if perimeter > 0 else 0.0
+            if contour_area < 16.0:
+                continue
+
+            hull = cv2.convexHull(c)
+            hull_area = cv2.contourArea(hull)
+            solidity = contour_area / max(hull_area, 1e-4) if hull_area > 0 else 0.5
+            if solidity < 0.22:
+                continue
 
             effective_area = max(contour_area, bounding_area * 0.4)
 
-            # Sub-window peak intensity and SNR
+            # Sub-window peak intensity and energy
             roi_tophat = tophat[y : y + h, x : x + w]
-            roi_raw = gray[y : y + h, x : x + w]
-            peak_val = float(np.max(roi_tophat)) if roi_tophat.size > 0 else 0.0
-            peak_raw = float(np.max(roi_raw)) if roi_raw.size > 0 else 0.0
+            roi_raw = filtered[y : y + h, x : x + w]
             total_energy = float(np.sum(roi_tophat)) if roi_tophat.size > 0 else 0.0
 
-            # Reject noise fluctuations: real optical spot has peak >= 25 and total energy >= 80
-            if peak_val < 25.0 or total_energy < 80.0:
+            if total_energy < 320.0:
+                continue
+
+            # Stage 6: Local Annulus Background Contrast Discrimination (Signal-to-Clutter Ratio)
+            pad = 14
+            bx1 = max(0, x - pad)
+            by1 = max(0, y - pad)
+            bx2 = min(w_img, x + w + pad)
+            by2 = min(h_img, y + h + pad)
+
+            surround_raw = filtered[by1:by2, bx1:bx2].astype(np.float32)
+            core_mask = np.zeros_like(surround_raw, dtype=bool)
+            cx1, cy1 = x - bx1, y - by1
+            core_mask[cy1 : cy1 + h, cx1 : cx1 + w] = True
+            annulus_pixels = surround_raw[~core_mask]
+            core_pixels = surround_raw[core_mask]
+
+            if annulus_pixels.size > 0:
+                local_mu = float(np.mean(annulus_pixels))
+                local_sigma = float(np.std(annulus_pixels))
+            else:
+                local_mu = bg_mu
+                local_sigma = bg_sigma
+
+            core_mean = float(np.mean(core_pixels)) if core_pixels.size > 0 else float(np.max(roi_raw))
+            local_contrast = core_mean - local_mu
+            global_contrast = core_mean - bg_mu
+
+            # CFAR Dual Contrast Gates (Statistical Grounding):
+            # A true beacon must exceed the global noise floor by >= 3.5 sigma AND exceed local annulus by >= 3.0 sigma
+            min_global_contrast = max(3.5 * bg_sigma, 10.0)
+            min_local_contrast = max(3.0 * local_sigma, 8.0)
+
+            if global_contrast < min_global_contrast or local_contrast < min_local_contrast:
                 continue
 
             # Signal-to-Noise Ratio (dB)
-            noise_floor = max(sigma, 1.0)
-            snr = (peak_val - mu) / noise_floor
-            snr_db = 20.0 * np.log10(max(snr, 1.0))
+            local_snr = local_contrast / max(local_sigma, 1.0)
+            snr_db = 20.0 * np.log10(max(local_snr, 1.0))
 
             # Sub-pixel Centroid using spatial moments of the Top-Hat intensity
             M = cv2.moments(roi_tophat)
@@ -184,19 +227,19 @@ class ClassicalBeaconDetector(BaseDetector):
                 cy = float(y + h / 2.0)
 
             # Analytical Quality / Confidence Metric [0.0 to 1.0]
-            aspect_score = 1.0 - min(abs(1.0 - aspect), 0.6)
-            circ_score = min(max(circularity, 0.20) / 0.70, 1.0)
-            peak_score = min(peak_val / 140.0, 1.0)
-            snr_score = min(snr_db / 20.0, 1.0)
-            energy_score = min(total_energy / 1000.0, 1.0)
-
+            aspect_sym = 1.0 - min(abs(1.0 - aspect), 0.6)
             confidence = float(
-                0.30 * snr_score + 0.30 * energy_score + 0.20 * peak_score + 0.10 * circ_score + 0.10 * aspect_score
+                0.40 * min(local_snr / 4.0, 1.0)
+                + 0.30 * min(global_contrast / (5.0 * max(bg_sigma, 1.0)), 1.0)
+                + 0.15 * solidity
+                + 0.15 * aspect_sym
             )
             confidence = max(0.0, min(1.0, confidence))
 
-            if confidence >= 0.30:
-                candidates.append(
+            rank_score = total_energy * local_snr * confidence * aspect_sym
+            candidates.append(
+                (
+                    rank_score,
                     DetectionResult(
                         detected=True,
                         centroid=(cx, cy),
@@ -204,15 +247,16 @@ class ClassicalBeaconDetector(BaseDetector):
                         confidence=confidence,
                         area=effective_area,
                         snr_db=snr_db,
-                        peak_intensity=peak_raw,
-                    )
+                        peak_intensity=float(np.max(roi_raw)) if roi_raw.size > 0 else 0.0,
+                    ),
                 )
+            )
 
         if not candidates:
             return self._null_result
 
-        # Return candidate with highest integrated energy & confidence
-        return max(candidates, key=lambda res: res.confidence * res.area)
+        # Return candidate with highest integrated flux energy & confidence
+        return max(candidates, key=lambda pair: pair[0])[1]
 
 
 class SpatiotemporalBeaconDetector(BaseDetector):

@@ -126,6 +126,7 @@ class SimulatorFrameSource(BaseFrameSource):
         # RF Link simulation
         self.rf_link_active: bool = False
         self.rf_uncertainty_px: float = 80.0  # Gaussian sigma in scene pixels
+        self.rf_target_angles_deg: Optional[Tuple[float, float]] = None
 
         # Angular scale: pixels per degree — dynamically computed from FOV
         self._recompute_fov_scaling()
@@ -155,6 +156,7 @@ class SimulatorFrameSource(BaseFrameSource):
 
         # Optional external disturbance injector hook
         self.disturbance_injector = None
+        self.beam_occluded_frames: int = 0
 
         self.last_update_time: float = time.perf_counter()
         self.reset()
@@ -182,12 +184,20 @@ class SimulatorFrameSource(BaseFrameSource):
         self.target_velocity_px_s = 0.0
 
         # Determine initial spawn coordinates (ISRO Parameter #11: Default = Random)
-        if self.initial_pos_mode == "random":
-            spawn_x = float(np.random.uniform(300.0, 1700.0))
-            spawn_y = float(np.random.uniform(300.0, 1700.0))
+        # Margin ensures full orbit / trajectory stays strictly inside 2000x2000 scene space
+        if self.motion_model == MotionModel.CIRCULAR:
+            margin = 250.0
+        elif self.motion_model == MotionModel.FIGURE_8:
+            margin = 400.0
         else:
-            spawn_x = float(np.clip(self.custom_initial_x, 50.0, self.scene_w - 50.0))
-            spawn_y = float(np.clip(self.custom_initial_y, 50.0, self.scene_h - 50.0))
+            margin = 200.0
+
+        if self.initial_pos_mode == "random":
+            spawn_x = float(np.random.uniform(margin, self.scene_w - margin))
+            spawn_y = float(np.random.uniform(margin, self.scene_h - margin))
+        else:
+            spawn_x = float(np.clip(self.custom_initial_x, margin, self.scene_w - margin))
+            spawn_y = float(np.clip(self.custom_initial_y, margin, self.scene_h - margin))
 
         self.orbit_center_x = spawn_x
         self.orbit_center_y = spawn_y
@@ -212,33 +222,55 @@ class SimulatorFrameSource(BaseFrameSource):
         self.prev_target_x = self.target_x
         self.prev_target_y = self.target_y
 
-        # --- RF LINK SIMULATION ---
-        # 'custom' + RF ON:  gimbal pre-slews to approx coords (GPS/INS error modelled as Gaussian noise)
-        # 'custom' + RF OFF: gimbal pre-slews exactly (ideal bench test)
-        # 'random':          gimbal stays at boresight centre, must blind-search
-        if self.initial_pos_mode == "custom":
-            scene_cx = self.scene_w / 2.0
-            scene_cy = self.scene_h / 2.0
-            if self.rf_link_active:
-                # Apply GPS/INS pointing error: Gaussian noise on the pre-slew
-                noise_x = float(np.random.normal(0.0, self.rf_uncertainty_px))
-                noise_y = float(np.random.normal(0.0, self.rf_uncertainty_px))
-                rf_pan_deg = (self.target_x + noise_x - scene_cx) / self.px_per_deg_x
-                rf_tilt_deg = (self.target_y + noise_y - scene_cy) / self.px_per_deg_y
-            else:
-                rf_pan_deg = (self.target_x - scene_cx) / self.px_per_deg_x
-                rf_tilt_deg = (self.target_y - scene_cy) / self.px_per_deg_y
-            self.pan_deg = max(self.min_pan_deg, min(self.max_pan_deg, rf_pan_deg))
-            self.tilt_deg = max(self.min_tilt_deg, min(self.max_tilt_deg, rf_tilt_deg))
-        else:
-            self.pan_deg = 0.0
-            self.tilt_deg = 0.0
+        # Gimbal ALWAYS starts physically boresighted at center (0.0, 0.0)
+        self.pan_deg = 0.0
+        self.tilt_deg = 0.0
 
+        # --- RF LINK SIMULATION ---
+        # If RF Side-Link is active: assign RF target pointing angles (perturbed by Gaussian error).
+        # The camera gimbal will dynamically slew across the sky at max PTZ rate toward this coordinate.
+        # If RF Side-Link is OFF: no RF target is given; camera remains at boresight (0, 0) and performs spiral search outward.
+        scene_cx = self.scene_w / 2.0
+        scene_cy = self.scene_h / 2.0
+        if self.rf_link_active:
+            max_err = 1.8 * self.rf_uncertainty_px
+            noise_x = float(np.clip(np.random.normal(0.0, self.rf_uncertainty_px), -max_err, max_err))
+            noise_y = float(np.clip(np.random.normal(0.0, self.rf_uncertainty_px), -max_err, max_err))
+            rf_pan_deg = (self.target_x + noise_x - scene_cx) / self.px_per_deg_x
+            rf_tilt_deg = (self.target_y + noise_y - scene_cy) / self.px_per_deg_y
+            self.rf_target_angles_deg = (
+                max(self.min_pan_deg, min(self.max_pan_deg, rf_pan_deg)),
+                max(self.min_tilt_deg, min(self.max_tilt_deg, rf_tilt_deg)),
+            )
+        else:
+            self.rf_target_angles_deg = None
+
+
+    def get_rf_target_angles(self) -> Optional[Tuple[float, float]]:
+        """Return dynamic RF broadcast coordinates with Gaussian pointing error."""
+        if not self.rf_link_active:
+            return None
+        scene_cx = self.scene_w / 2.0
+        scene_cy = self.scene_h / 2.0
+        max_err = 1.8 * self.rf_uncertainty_px
+        noise_x = float(np.clip(np.random.normal(0.0, self.rf_uncertainty_px), -max_err, max_err))
+        noise_y = float(np.clip(np.random.normal(0.0, self.rf_uncertainty_px), -max_err, max_err))
+        rf_pan_deg = (self.target_x + noise_x - scene_cx) / self.px_per_deg_x
+        rf_tilt_deg = (self.target_y + noise_y - scene_cy) / self.px_per_deg_y
+        return (
+            max(self.min_pan_deg, min(self.max_pan_deg, rf_pan_deg)),
+            max(self.min_tilt_deg, min(self.max_tilt_deg, rf_tilt_deg)),
+        )
+
+    def set_beam_occluded(self, duration_frames: int) -> None:
+        """Inject physical beam blockage / optical path occlusion for N frames."""
+        self.beam_occluded_frames = max(0, int(duration_frames))
 
     def set_rf_link(self, active: bool, uncertainty_px: float) -> None:
         """Configure RF side-link simulation (active flag + Gaussian pointing error)."""
         self.rf_link_active = active
         self.rf_uncertainty_px = max(10.0, min(300.0, uncertainty_px))
+        self.rf_target_angles_deg = self.get_rf_target_angles()
 
     def set_motion_model(self, model: MotionModel) -> None:
         """Dynamically update beacon motion model."""
@@ -264,6 +296,7 @@ class SimulatorFrameSource(BaseFrameSource):
         self.initial_pos_mode = mode
         self.custom_initial_x = custom_x
         self.custom_initial_y = custom_y
+        self.reset()
 
     def set_max_pan_speed(self, max_speed_deg_s: float) -> None:
         """Update maximum Pan axis slew rate (ISRO Parameter #13)."""
@@ -362,6 +395,10 @@ class SimulatorFrameSource(BaseFrameSource):
                 self.random_heading = -math.pi / 2
                 self.target_y = self.scene_h - margin
 
+        # Hard constraint: target beacon remains strictly within 2000x2000 space boundary
+        self.target_x = max(50.0, min(self.scene_w - 50.0, self.target_x))
+        self.target_y = max(50.0, min(self.scene_h - 50.0, self.target_y))
+
         # Estimate instantaneous velocity
         inst_vx = (self.target_x - self.prev_target_x) / max(0.001, dt)
         inst_vy = (self.target_y - self.prev_target_y) / max(0.001, dt)
@@ -399,8 +436,14 @@ class SimulatorFrameSource(BaseFrameSource):
 
         half_s = self.target_size // 2
 
-        # Render optical beacon spot if within (or near) camera FOV
-        if -half_s <= u_target < self.cam_w + half_s and -half_s <= v_target < self.cam_h + half_s:
+        # Check if optical beam is occluded / broken
+        is_occluded = False
+        if self.beam_occluded_frames > 0:
+            self.beam_occluded_frames -= 1
+            is_occluded = True
+
+        # Render optical beacon spot if within (or near) camera FOV and not occluded
+        if not is_occluded and (-half_s <= u_target < self.cam_w + half_s and -half_s <= v_target < self.cam_h + half_s):
 
             if self.target_shape == TargetShape.SQUARE:
                 # Flat-top square core (255 intensity) + Gaussian halo flare

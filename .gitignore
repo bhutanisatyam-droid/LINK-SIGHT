@@ -1,7 +1,6 @@
-# PyInstaller — ignore intermediate build artifacts and bundled runtime DLLs
-# but ALLOW the compiled .exe so judges can see it on GitHub
+# PyInstaller — ignore intermediate build artifacts and bundled outputs
 build/
-dist/*/_internal/
+dist/
 *.spec
 
 # Python bytecode & cache

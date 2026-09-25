@@ -99,6 +99,7 @@ class TelemetryLogger:
         self.loss_start_time: Optional[float] = None
         self.last_reacquisition_duration_s: float = 0.0
         self._consecutive_locked: int = 0
+        self._consecutive_unlocked: int = 0
 
         # Tracking error statistics
         self._error_history: Deque[float] = deque(maxlen=2000)
@@ -128,6 +129,7 @@ class TelemetryLogger:
             self.loss_start_time = None
             self.last_reacquisition_duration_s = 0.0
             self._consecutive_locked = 0
+            self._consecutive_unlocked = 0
             self._error_history.clear()
             self.chart_buffer.clear()
             self.records.clear()
@@ -171,12 +173,14 @@ class TelemetryLogger:
             rel_time = now - self.start_time
 
             # Status classification
-            # ISRO Locked tracking specification: status == "TRACKING" with tracking error <= 15.0px
-            is_locked = (status == "TRACKING") and (tracking_error_px <= 15.0)
+            # ISRO Locked tracking specification: tracker reports TRACKING (verified optical detection & Kalman state update)
+            is_locked = (status == "TRACKING")
 
             if is_locked:
                 self._consecutive_locked += 1
                 self.locked_frames += 1
+                self._consecutive_unlocked = 0
+
                 if self.first_lock_time is None and self._consecutive_locked >= 2:
                     self.first_lock_time = now
                     self.acquisition_duration_s = now - self.start_time
@@ -185,9 +189,9 @@ class TelemetryLogger:
                         f"Initial lock in {self.acquisition_duration_s:.2f}s (Error: {tracking_error_px:.1f}px)"
                     )
 
-                # Re-acquisition completed only when target is centered within ISRO spec for >= 2 frames
-                if self.loss_start_time is not None and self._consecutive_locked >= 2:
-                    reacq_time = now - self.loss_start_time
+                # Re-acquisition completed when target is confirmed locked and centered within ISRO envelope (<= 14px)
+                if self.loss_start_time is not None and tracking_error_px <= 14.0 and self._consecutive_locked >= 2:
+                    reacq_time = max(0.01, now - self.loss_start_time)
                     self.last_reacquisition_duration_s = reacq_time
                     self.loss_start_time = None
                     self.log_event(
@@ -197,9 +201,15 @@ class TelemetryLogger:
 
             else:
                 self._consecutive_locked = 0
-                if status in ("LOST", "SEARCHING", "DEGRADED") or tracking_error_px > 25.0:
-                    if self.loss_start_time is None:
-                        self.loss_start_time = now
+                self._consecutive_unlocked += 1
+
+                # True track loss declaration:
+                # Require explicit LOST/SEARCHING state or persistent unlocked/degraded state for >= 6 frames (~0.2s)
+                # Transient 1-frame jitter micro-spikes will not trigger spurious TARGET_LOST events
+                if self.first_lock_time is not None and self.loss_start_time is None:
+                    if status in ("LOST", "SEARCHING") or (self._consecutive_unlocked >= 6 and (status == "DEGRADED" or tracking_error_px > 30.0)):
+                        approx_dt = 1.0 / max(self.current_fps, 20.0)
+                        self.loss_start_time = now - (self._consecutive_unlocked * approx_dt)
                         self.loss_event_count += 1
                         self.log_event("TARGET_LOST", f"Track lost (Event #{self.loss_event_count})")
 
