@@ -24,7 +24,7 @@ from fsoc.detector import (
     SpatiotemporalBeaconDetector,
 )
 from fsoc.disturbance import DisturbanceConfig, DisturbanceInjector
-from fsoc.frame_source import BaseFrameSource, GroundTruthState, MotionModel, SimulatorFrameSource, VideoFileFrameSource
+from fsoc.frame_source import BaseFrameSource, GroundTruthState, MotionModel, SimulatorFrameSource, TargetShape, VideoFileFrameSource
 from fsoc.logger import TelemetryLogger, TelemetrySnapshot
 from fsoc.reacquisition import CutHexagonalSpiralSearch
 from fsoc.tracker import BaseTracker, KalmanBeaconTracker, TrackEstimate, TrackStatus
@@ -92,12 +92,63 @@ class TrackingPipeline:
             self.frame_source.set_target_size(size_px)
             self.logger.log_event("CONFIG_CHANGE", f"Beacon aperture size set to {size_px}px")
 
+    def set_fov(self, fov_pan_deg: float, fov_tilt_deg: float) -> None:
+        """Update virtual camera field of view (ISRO Parameter #4)."""
+        if isinstance(self.frame_source, SimulatorFrameSource):
+            self.frame_source.set_fov(fov_pan_deg, fov_tilt_deg)
+            self.logger.log_event(
+                "CONFIG_CHANGE",
+                f"Camera FOV set to {fov_pan_deg:.1f}° pan × {fov_tilt_deg:.1f}° tilt"
+            )
+
+    def set_target_shape(self, shape: TargetShape) -> None:
+        """Update rendered beacon spot shape (ISRO Parameter #9)."""
+        if isinstance(self.frame_source, SimulatorFrameSource):
+            self.frame_source.set_target_shape(shape)
+            self.logger.log_event("CONFIG_CHANGE", f"Target shape set to {shape.value.upper()}")
+
+    def set_initial_position(self, mode: str, custom_x: float = 1000.0, custom_y: float = 1000.0) -> None:
+        """Set spawn location mode ('random' or 'custom') (ISRO Parameter #11)."""
+        if isinstance(self.frame_source, SimulatorFrameSource):
+            self.frame_source.set_initial_pos_mode(mode, custom_x, custom_y)
+            self.logger.log_event(
+                "CONFIG_CHANGE",
+                f"Initial target position: {mode.upper()}"
+                + (f" ({custom_x:.0f}, {custom_y:.0f})" if mode == "custom" else "")
+            )
+
+    def set_pan_speed(self, speed_deg_s: float) -> None:
+        """Update Pan axis slew rate (ISRO Parameter #13, range 1–10 °/s)."""
+        speed_deg_s = max(1.0, min(10.0, speed_deg_s))
+        if isinstance(self.frame_source, SimulatorFrameSource):
+            self.frame_source.set_max_pan_speed(speed_deg_s)
+        self.controller.set_max_speed(speed_deg_s)
+        self.logger.log_event("CONFIG_CHANGE", f"Pan slew speed set to {speed_deg_s:.1f} deg/s")
+
+    def set_tilt_speed(self, speed_deg_s: float) -> None:
+        """Update Tilt axis slew rate (ISRO Parameter #14, range 1–10 °/s)."""
+        speed_deg_s = max(1.0, min(10.0, speed_deg_s))
+        if isinstance(self.frame_source, SimulatorFrameSource):
+            self.frame_source.set_max_tilt_speed(speed_deg_s)
+        self.logger.log_event("CONFIG_CHANGE", f"Tilt slew speed set to {speed_deg_s:.1f} deg/s")
+
     def set_max_ptz_speed(self, speed_deg_s: float) -> None:
-        """Update gimbal maximum slew rate limit."""
+        """Update gimbal maximum slew rate limit (unified pan + tilt)."""
         if isinstance(self.frame_source, SimulatorFrameSource):
             self.frame_source.set_max_ptz_speed(speed_deg_s)
         self.controller.set_max_speed(speed_deg_s)
         self.logger.log_event("CONFIG_CHANGE", f"Max PTZ slew speed set to {speed_deg_s:.1f} deg/s")
+
+    def set_disturbance_bounds(self, gaussian_sigma: float, jitter_max_px: float, platform_max_px: float) -> None:
+        """Clamp disturbance parameters to ISRO PS-26169 hard limits (σ≤20, ±20px)."""
+        self.disturbance_injector.config.gaussian_sigma = max(0.0, min(20.0, gaussian_sigma))
+        self.disturbance_injector.config.camera_jitter_max_px = max(0.0, min(20.0, jitter_max_px))
+        self.disturbance_injector.config.platform_motion_max_px = max(0.0, min(20.0, platform_max_px))
+        self.logger.log_event(
+            "CONFIG_CHANGE",
+            f"Disturbance bounds: Gauss σ={gaussian_sigma:.0f}, Jitter ±{jitter_max_px:.0f}px, Platform ±{platform_max_px:.0f}px"
+        )
+
 
     def load_video_source(self, video_path: str) -> bool:
         """Switch to VideoFileFrameSource (Benchmark-2 mode on un-simulated footage)."""

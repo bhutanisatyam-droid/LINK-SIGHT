@@ -28,6 +28,13 @@ class MotionModel(Enum):
     RANDOM = "random"
 
 
+class TargetShape(Enum):
+    """Supported optical beacon spot shapes (ISRO Parameter #9)."""
+    SQUARE = "square"      # Default flat-top square core + Gaussian halo
+    CIRCLE = "circle"      # Circular disc + radial halo
+    CROSS = "cross"        # Anamorphic crosshair / optical plus pattern
+
+
 @dataclass
 class GroundTruthState:
     """Telemetry data isolated for minimap / truth-validation logging only.
@@ -95,7 +102,12 @@ class SimulatorFrameSource(BaseFrameSource):
         fov_tilt_deg: float = 3.0,
         target_size_px: int = 10,
         motion_model: MotionModel = MotionModel.CIRCULAR,
-        max_ptz_speed_deg_s: float = 8.0,
+        max_pan_speed_deg_s: float = 5.0,
+        max_tilt_speed_deg_s: float = 5.0,
+        target_shape: TargetShape = TargetShape.SQUARE,
+        initial_pos_mode: str = "random",
+        custom_initial_x: float = 1000.0,
+        custom_initial_y: float = 1000.0,
     ):
         self.scene_w = scene_width
         self.scene_h = scene_height
@@ -105,19 +117,15 @@ class SimulatorFrameSource(BaseFrameSource):
         self.fov_tilt_deg = fov_tilt_deg
         self.target_size = target_size_px
         self.motion_model = motion_model
-        self.max_ptz_speed_deg_s = max_ptz_speed_deg_s
+        self.max_pan_speed_deg_s = max(1.0, min(10.0, max_pan_speed_deg_s))
+        self.max_tilt_speed_deg_s = max(1.0, min(10.0, max_tilt_speed_deg_s))
+        self.target_shape = target_shape
+        self.initial_pos_mode = initial_pos_mode
+        self.custom_initial_x = custom_initial_x
+        self.custom_initial_y = custom_initial_y
 
-        # Angular scale: pixels per degree
-        # 640 px / 4 deg = 160 px/deg; 480 px / 3 deg = 160 px/deg
-        self.px_per_deg_x = self.cam_w / self.fov_pan_deg
-        self.px_per_deg_y = self.cam_h / self.fov_tilt_deg
-
-        # Gimbal limits in degrees (allow camera center to reach full reachable flight volume)
-        # Margin: 40px from scene boundary
-        self.max_pan_deg = (self.scene_w / 2.0 - 40.0) / self.px_per_deg_x
-        self.min_pan_deg = -self.max_pan_deg
-        self.max_tilt_deg = (self.scene_h / 2.0 - 40.0) / self.px_per_deg_y
-        self.min_tilt_deg = -self.max_tilt_deg
+        # Angular scale: pixels per degree — dynamically computed from FOV
+        self._recompute_fov_scaling()
 
         # Virtual PTZ state
         self.pan_deg: float = 0.0
@@ -152,6 +160,16 @@ class SimulatorFrameSource(BaseFrameSource):
     def is_video_mode(self) -> bool:
         return False
 
+    def _recompute_fov_scaling(self) -> None:
+        """Recompute angular scale and gimbal limits based on current FOV settings."""
+        self.px_per_deg_x = self.cam_w / self.fov_pan_deg
+        self.px_per_deg_y = self.cam_h / self.fov_tilt_deg
+        # Gimbal hard limits: 40px margin from scene boundary
+        self.max_pan_deg = (self.scene_w / 2.0 - 40.0) / self.px_per_deg_x
+        self.min_pan_deg = -self.max_pan_deg
+        self.max_tilt_deg = (self.scene_h / 2.0 - 40.0) / self.px_per_deg_y
+        self.min_tilt_deg = -self.max_tilt_deg
+
     def reset(self) -> None:
         """Reset kinematics, gimbal pointing, and target trajectory."""
         self.pan_deg = 0.0
@@ -162,23 +180,30 @@ class SimulatorFrameSource(BaseFrameSource):
         self.last_commanded_omega_deg_s = 0.0
         self.target_velocity_px_s = 0.0
 
-        # Initialize target according to motion model
-        cx, cy = self.scene_w / 2.0, self.scene_h / 2.0
+        # Determine initial spawn coordinates (ISRO Parameter #11: Default = Random)
+        if self.initial_pos_mode == "random":
+            spawn_x = float(np.random.uniform(300.0, 1700.0))
+            spawn_y = float(np.random.uniform(300.0, 1700.0))
+        else:
+            spawn_x = float(np.clip(self.custom_initial_x, 50.0, self.scene_w - 50.0))
+            spawn_y = float(np.clip(self.custom_initial_y, 50.0, self.scene_h - 50.0))
+
         if self.motion_model == MotionModel.CIRCULAR:
+            # For circular orbit, the random spawn becomes the orbit centre offset
             r = 220.0
-            self.target_x = cx + r
-            self.target_y = cy
+            self.target_x = spawn_x + r if self.initial_pos_mode == "random" else spawn_x + r
+            self.target_y = spawn_y if self.initial_pos_mode == "random" else spawn_y
         elif self.motion_model == MotionModel.STRAIGHT:
-            self.target_x = cx - 350.0
-            self.target_y = cy - 200.0
+            self.target_x = spawn_x
+            self.target_y = spawn_y
             self.target_vx = 60.0
             self.target_vy = 35.0
         elif self.motion_model == MotionModel.FIGURE_8:
-            self.target_x = cx
-            self.target_y = cy
+            self.target_x = spawn_x
+            self.target_y = spawn_y
         elif self.motion_model == MotionModel.RANDOM:
-            self.target_x = cx
-            self.target_y = cy
+            self.target_x = spawn_x
+            self.target_y = spawn_y
             self.random_heading = np.random.uniform(0, 2 * math.pi)
 
         self.prev_target_x = self.target_x
@@ -193,15 +218,40 @@ class SimulatorFrameSource(BaseFrameSource):
         """Update beacon physical size in pixels (5-20px)."""
         self.target_size = max(5, min(25, size_px))
 
+    def set_fov(self, fov_pan_deg: float, fov_tilt_deg: float) -> None:
+        """Dynamically update camera Field of View (ISRO Parameter #4)."""
+        self.fov_pan_deg = max(1.0, min(12.0, fov_pan_deg))
+        self.fov_tilt_deg = max(1.0, min(9.0, fov_tilt_deg))
+        self._recompute_fov_scaling()
+
+    def set_target_shape(self, shape: TargetShape) -> None:
+        """Set the optical beacon rendering shape (ISRO Parameter #9)."""
+        self.target_shape = shape
+
+    def set_initial_pos_mode(self, mode: str, custom_x: float = 1000.0, custom_y: float = 1000.0) -> None:
+        """Set spawn mode: 'random' (ISRO default) or 'custom' with explicit coordinates."""
+        self.initial_pos_mode = mode
+        self.custom_initial_x = custom_x
+        self.custom_initial_y = custom_y
+
+    def set_max_pan_speed(self, max_speed_deg_s: float) -> None:
+        """Update maximum Pan axis slew rate (ISRO Parameter #13)."""
+        self.max_pan_speed_deg_s = max(1.0, min(10.0, max_speed_deg_s))
+
+    def set_max_tilt_speed(self, max_speed_deg_s: float) -> None:
+        """Update maximum Tilt axis slew rate (ISRO Parameter #14)."""
+        self.max_tilt_speed_deg_s = max(1.0, min(10.0, max_speed_deg_s))
+
     def set_max_ptz_speed(self, max_speed_deg_s: float) -> None:
-        """Update maximum PTZ gimbal speed."""
-        self.max_ptz_speed_deg_s = max(1.0, min(30.0, max_speed_deg_s))
+        """Legacy unified setter — sets both pan and tilt speeds equally."""
+        self.set_max_pan_speed(max_speed_deg_s)
+        self.set_max_tilt_speed(max_speed_deg_s)
 
     def apply_ptz_velocity(self, pan_vel_deg_s: float, tilt_vel_deg_s: float, dt: float) -> None:
-        """Slew virtual PTZ camera respecting maximum mechanical slew rate."""
-        # Slew rate clamping
-        limited_pan_vel = max(-self.max_ptz_speed_deg_s, min(self.max_ptz_speed_deg_s, pan_vel_deg_s))
-        limited_tilt_vel = max(-self.max_ptz_speed_deg_s, min(self.max_ptz_speed_deg_s, tilt_vel_deg_s))
+        """Slew virtual PTZ camera with independent Pan & Tilt slew rate limiting (ISRO #13 & #14)."""
+        # Independent axis slew rate clamping
+        limited_pan_vel = max(-self.max_pan_speed_deg_s, min(self.max_pan_speed_deg_s, pan_vel_deg_s))
+        limited_tilt_vel = max(-self.max_tilt_speed_deg_s, min(self.max_tilt_speed_deg_s, tilt_vel_deg_s))
 
         self.last_commanded_omega_deg_s = math.sqrt(limited_pan_vel ** 2 + limited_tilt_vel ** 2)
 
@@ -317,30 +367,59 @@ class SimulatorFrameSource(BaseFrameSource):
 
         half_s = self.target_size // 2
 
-        # Draw optical square beacon if within camera FOV
+        # Render optical beacon spot if within (or near) camera FOV
         if -half_s <= u_target < self.cam_w + half_s and -half_s <= v_target < self.cam_h + half_s:
-            b_x1 = max(0, u_target - half_s)
-            b_x2 = min(self.cam_w, u_target + half_s)
-            b_y1 = max(0, v_target - half_s)
-            b_y2 = min(self.cam_h, v_target + half_s)
 
-            if b_x2 > b_x1 and b_y2 > b_y1:
-                # Flat-top intense laser spot (255 intensity)
-                frame[b_y1:b_y2, b_x1:b_x2] = 255
+            if self.target_shape == TargetShape.SQUARE:
+                # Flat-top square core (255 intensity) + Gaussian halo flare
+                b_x1 = max(0, u_target - half_s)
+                b_x2 = min(self.cam_w, u_target + half_s)
+                b_y1 = max(0, v_target - half_s)
+                b_y2 = min(self.cam_h, v_target + half_s)
+                if b_x2 > b_x1 and b_y2 > b_y1:
+                    frame[b_y1:b_y2, b_x1:b_x2] = 255
 
-                # Optical PSF halo (subtle Gaussian flare around square aperture)
-                halo_radius = self.target_size + 4
-                h_x1 = max(0, u_target - halo_radius)
-                h_x2 = min(self.cam_w, u_target + halo_radius)
-                h_y1 = max(0, v_target - halo_radius)
-                h_y2 = min(self.cam_h, v_target + halo_radius)
-
-                for yy in range(h_y1, h_y2):
-                    for xx in range(h_x1, h_x2):
+            elif self.target_shape == TargetShape.CIRCLE:
+                # Circular saturated disc + radial halo
+                radius = half_s
+                for yy in range(max(0, v_target - radius - 2), min(self.cam_h, v_target + radius + 3)):
+                    for xx in range(max(0, u_target - radius - 2), min(self.cam_w, u_target + radius + 3)):
                         dist_sq = (xx - u_target) ** 2 + (yy - v_target) ** 2
-                        flare = int(80 * math.exp(-dist_sq / (2.0 * (half_s * 1.5) ** 2)))
-                        if flare > 0 and frame[yy, xx] < 255:
-                            frame[yy, xx] = min(255, frame[yy, xx] + flare)
+                        if dist_sq <= radius * radius:
+                            frame[yy, xx] = 255
+
+            elif self.target_shape == TargetShape.CROSS:
+                # Anamorphic crosshair / optical plus pattern
+                arm = half_s + 2
+                thick = max(1, half_s // 3)
+                # Horizontal arm
+                hx1 = max(0, u_target - arm)
+                hx2 = min(self.cam_w, u_target + arm)
+                hy1 = max(0, v_target - thick)
+                hy2 = min(self.cam_h, v_target + thick)
+                if hx2 > hx1 and hy2 > hy1:
+                    frame[hy1:hy2, hx1:hx2] = 255
+                # Vertical arm
+                vx1 = max(0, u_target - thick)
+                vx2 = min(self.cam_w, u_target + thick)
+                vy1 = max(0, v_target - arm)
+                vy2 = min(self.cam_h, v_target + arm)
+                if vx2 > vx1 and vy2 > vy1:
+                    frame[vy1:vy2, vx1:vx2] = 255
+
+            # Common optical PSF Gaussian halo flare for all shapes
+            halo_radius = self.target_size + 4
+            h_x1 = max(0, u_target - halo_radius)
+            h_x2 = min(self.cam_w, u_target + halo_radius)
+            h_y1 = max(0, v_target - halo_radius)
+            h_y2 = min(self.cam_h, v_target + halo_radius)
+            sigma_sq = 2.0 * (half_s * 1.5) ** 2
+            for yy in range(h_y1, h_y2):
+                for xx in range(h_x1, h_x2):
+                    dist_sq = (xx - u_target) ** 2 + (yy - v_target) ** 2
+                    flare = int(80 * math.exp(-dist_sq / sigma_sq))
+                    if flare > 0 and frame[yy, xx] < 255:
+                        frame[yy, xx] = min(255, frame[yy, xx] + flare)
 
         # Apply disturbance injector if attached (with real-time flight dynamics feedback)
         if self.disturbance_injector is not None:

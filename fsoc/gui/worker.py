@@ -11,7 +11,7 @@ from typing import Optional
 from PySide6.QtCore import QThread, Signal
 
 from fsoc.engine import EngineOutput, TrackingPipeline
-from fsoc.frame_source import MotionModel
+from fsoc.frame_source import MotionModel, TargetShape
 
 
 class TrackingThread(QThread):
@@ -39,6 +39,12 @@ class TrackingThread(QThread):
         self._pending_ptz_speed: Optional[float] = None
         self._pending_reset: bool = False
         self._pending_occlusion_frames: Optional[int] = None
+        # ISRO Parameter Upgrades
+        self._pending_fov: Optional[tuple] = None          # (pan_deg, tilt_deg)
+        self._pending_target_shape: Optional[TargetShape] = None
+        self._pending_initial_pos: Optional[tuple] = None  # (mode, x, y)
+        self._pending_pan_speed: Optional[float] = None
+        self._pending_tilt_speed: Optional[float] = None
 
     def run(self) -> None:
         """Main real-time tracking thread loop."""
@@ -77,6 +83,26 @@ class TrackingThread(QThread):
                 if self._pending_ptz_speed is not None:
                     self.pipeline.set_max_ptz_speed(self._pending_ptz_speed)
                     self._pending_ptz_speed = None
+
+                if self._pending_fov is not None:
+                    self.pipeline.set_fov(*self._pending_fov)
+                    self._pending_fov = None
+
+                if self._pending_target_shape is not None:
+                    self.pipeline.set_target_shape(self._pending_target_shape)
+                    self._pending_target_shape = None
+
+                if self._pending_initial_pos is not None:
+                    self.pipeline.set_initial_position(*self._pending_initial_pos)
+                    self._pending_initial_pos = None
+
+                if self._pending_pan_speed is not None:
+                    self.pipeline.set_pan_speed(self._pending_pan_speed)
+                    self._pending_pan_speed = None
+
+                if self._pending_tilt_speed is not None:
+                    self.pipeline.set_tilt_speed(self._pending_tilt_speed)
+                    self._pending_tilt_speed = None
 
                 is_paused = self._paused
 
@@ -140,3 +166,28 @@ class TrackingThread(QThread):
         """Queue switch back to simulator."""
         with self._mutex:
             self._pending_switch_sim = True
+
+    def request_fov(self, fov_pan_deg: float, fov_tilt_deg: float) -> None:
+        """Queue camera FOV update (ISRO Parameter #4)."""
+        with self._mutex:
+            self._pending_fov = (fov_pan_deg, fov_tilt_deg)
+
+    def request_target_shape(self, shape: TargetShape) -> None:
+        """Queue target shape update (ISRO Parameter #9)."""
+        with self._mutex:
+            self._pending_target_shape = shape
+
+    def request_initial_position(self, mode: str, custom_x: float = 1000.0, custom_y: float = 1000.0) -> None:
+        """Queue initial target location update (ISRO Parameter #11)."""
+        with self._mutex:
+            self._pending_initial_pos = (mode, custom_x, custom_y)
+
+    def request_pan_speed(self, speed_deg_s: float) -> None:
+        """Queue pan axis speed update (ISRO Parameter #13)."""
+        with self._mutex:
+            self._pending_pan_speed = speed_deg_s
+
+    def request_tilt_speed(self, speed_deg_s: float) -> None:
+        """Queue tilt axis speed update (ISRO Parameter #14)."""
+        with self._mutex:
+            self._pending_tilt_speed = speed_deg_s

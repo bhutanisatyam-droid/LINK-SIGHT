@@ -211,7 +211,13 @@ class MainWindow(QMainWindow):
         # Parameter controls
         self.control_panel.motion_model_changed.connect(self.worker.request_motion_model)
         self.control_panel.target_size_changed.connect(self.worker.request_target_size)
-        self.control_panel.ptz_speed_changed.connect(self.worker.request_ptz_speed)
+
+        # ISRO Parameter Upgrades
+        self.control_panel.fov_changed.connect(self.worker.request_fov)
+        self.control_panel.target_shape_changed.connect(self.worker.request_target_shape)
+        self.control_panel.initial_pos_changed.connect(self.worker.request_initial_position)
+        self.control_panel.pan_speed_changed.connect(self.worker.request_pan_speed)
+        self.control_panel.tilt_speed_changed.connect(self.worker.request_tilt_speed)
 
         # Benchmark-2 Video source loading
         self.control_panel.video_file_selected.connect(self.worker.request_load_video)
@@ -219,6 +225,7 @@ class MainWindow(QMainWindow):
 
         # Session Log Export
         self.control_panel.export_logs_clicked.connect(self._export_session_logs)
+
 
     def _on_frame_ready(self, output: EngineOutput) -> None:
         """Handle incoming frame telemetry snapshot."""

@@ -57,9 +57,14 @@ class ControlPanelWidget(QWidget):
     """Dense mission control dashboard input panel."""
 
     # Control Signals
-    motion_model_changed = Signal(object) # MotionModel
+    motion_model_changed = Signal(object)   # MotionModel
     target_size_changed = Signal(int)
     ptz_speed_changed = Signal(float)
+    fov_changed = Signal(float, float)      # (pan_deg, tilt_deg)  — ISRO #4
+    target_shape_changed = Signal(object)   # TargetShape           — ISRO #9
+    initial_pos_changed = Signal(str, float, float)  # (mode, x, y) — ISRO #11
+    pan_speed_changed = Signal(float)       # ISRO #13
+    tilt_speed_changed = Signal(float)      # ISRO #14
     run_clicked = Signal()
     pause_clicked = Signal()
     reset_clicked = Signal()
@@ -141,18 +146,64 @@ class ControlPanelWidget(QWidget):
         exec_layout.addWidget(self.btn_occlude)
         layout.addWidget(exec_frame)
 
-        # --- SECTION 2: MOTION MODEL & OPTICS ---
+        # --- SECTION 2: ISRO SYSTEM PARAMETERS ---
         motion_frame = QFrame()
         motion_frame.setObjectName("SectionFrame")
         motion_layout = QVBoxLayout(motion_frame)
         motion_layout.setContentsMargins(6, 6, 6, 6)
         motion_layout.setSpacing(6)
 
-        hdr_motion = QLabel("TRAJECTORY & OPTICAL SPECS")
+        hdr_motion = QLabel("ISRO SYSTEM PARAMETERS")
         hdr_motion.setObjectName("SectionHeader")
         motion_layout.addWidget(hdr_motion)
 
-        # Motion model dropdown
+        # --- Camera FOV (ISRO Parameter #4) ---
+        fov_lbl = QLabel("Camera FOV (Pan × Tilt °):")
+        fov_lbl.setFont(get_label_font(size_pt=8))
+        fov_lbl.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
+        motion_layout.addWidget(fov_lbl)
+
+        fov_row = QHBoxLayout()
+        fov_row.setSpacing(4)
+        lbl_pan_fov = QLabel("Pan:")
+        lbl_pan_fov.setFont(get_label_font(size_pt=8))
+        self.spin_fov_pan = QDoubleSpinBox()
+        self.spin_fov_pan.setRange(1.0, 12.0)
+        self.spin_fov_pan.setValue(4.0)
+        self.spin_fov_pan.setSingleStep(0.5)
+        self.spin_fov_pan.setSuffix("°")
+        self.spin_fov_pan.valueChanged.connect(self._on_fov_changed)
+
+        lbl_tilt_fov = QLabel("Tilt:")
+        lbl_tilt_fov.setFont(get_label_font(size_pt=8))
+        self.spin_fov_tilt = QDoubleSpinBox()
+        self.spin_fov_tilt.setRange(1.0, 9.0)
+        self.spin_fov_tilt.setValue(3.0)
+        self.spin_fov_tilt.setSingleStep(0.5)
+        self.spin_fov_tilt.setSuffix("°")
+        self.spin_fov_tilt.valueChanged.connect(self._on_fov_changed)
+
+        fov_row.addWidget(lbl_pan_fov)
+        fov_row.addWidget(self.spin_fov_pan)
+        fov_row.addWidget(lbl_tilt_fov)
+        fov_row.addWidget(self.spin_fov_tilt)
+        motion_layout.addLayout(fov_row)
+
+        # --- Target Shape (ISRO Parameter #9) ---
+        lbl_shape = QLabel("Beacon Spot Shape:")
+        lbl_shape.setFont(get_label_font(size_pt=8))
+        lbl_shape.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
+        motion_layout.addWidget(lbl_shape)
+
+        from fsoc.frame_source import TargetShape
+        self.combo_shape = QComboBox()
+        self.combo_shape.addItem("Square (Default)", TargetShape.SQUARE)
+        self.combo_shape.addItem("Circle", TargetShape.CIRCLE)
+        self.combo_shape.addItem("Cross (+)", TargetShape.CROSS)
+        self.combo_shape.currentIndexChanged.connect(self._on_shape_changed)
+        motion_layout.addWidget(self.combo_shape)
+
+        # --- Motion model dropdown ---
         lbl_model = QLabel("Beacon Trajectory Model:")
         lbl_model.setFont(get_label_font(size_pt=8))
         lbl_model.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
@@ -166,7 +217,47 @@ class ControlPanelWidget(QWidget):
         self.combo_motion.currentIndexChanged.connect(self._on_motion_changed)
         motion_layout.addWidget(self.combo_motion)
 
-        # Target size and PTZ speed
+        # --- Initial Target Location (ISRO Parameter #11, Default: Random) ---
+        lbl_initpos = QLabel("Initial Target Location:")
+        lbl_initpos.setFont(get_label_font(size_pt=8))
+        lbl_initpos.setStyleSheet(f"color: {COLOR_TEXT_MUTED};")
+        motion_layout.addWidget(lbl_initpos)
+
+        self.combo_initpos = QComboBox()
+        self.combo_initpos.addItem("Random (ISRO Default)", "random")
+        self.combo_initpos.addItem("Custom Coordinates", "custom")
+        self.combo_initpos.currentIndexChanged.connect(self._on_initpos_changed)
+        motion_layout.addWidget(self.combo_initpos)
+
+        custom_pos_row = QHBoxLayout()
+        custom_pos_row.setSpacing(4)
+        lbl_cx = QLabel("X:")
+        lbl_cx.setFont(get_label_font(size_pt=8))
+        self.spin_custom_x = QDoubleSpinBox()
+        self.spin_custom_x.setRange(100.0, 1900.0)
+        self.spin_custom_x.setValue(1000.0)
+        self.spin_custom_x.setSingleStep(50.0)
+        self.spin_custom_x.setSuffix(" px")
+        self.spin_custom_x.setEnabled(False)
+        self.spin_custom_x.valueChanged.connect(self._on_initpos_changed)
+
+        lbl_cy = QLabel("Y:")
+        lbl_cy.setFont(get_label_font(size_pt=8))
+        self.spin_custom_y = QDoubleSpinBox()
+        self.spin_custom_y.setRange(100.0, 1900.0)
+        self.spin_custom_y.setValue(1000.0)
+        self.spin_custom_y.setSingleStep(50.0)
+        self.spin_custom_y.setSuffix(" px")
+        self.spin_custom_y.setEnabled(False)
+        self.spin_custom_y.valueChanged.connect(self._on_initpos_changed)
+
+        custom_pos_row.addWidget(lbl_cx)
+        custom_pos_row.addWidget(self.spin_custom_x)
+        custom_pos_row.addWidget(lbl_cy)
+        custom_pos_row.addWidget(self.spin_custom_y)
+        motion_layout.addLayout(custom_pos_row)
+
+        # --- Pan & Tilt Speeds (ISRO Parameters #13 & #14, Range 1.0-10.0 °/s) ---
         params_grid = QGridLayout()
         params_grid.setContentsMargins(0, 4, 0, 0)
         params_grid.setHorizontalSpacing(8)
@@ -180,19 +271,30 @@ class ControlPanelWidget(QWidget):
         self.spin_size.setSuffix(" px")
         self.spin_size.valueChanged.connect(self.target_size_changed.emit)
 
-        lbl_speed = QLabel("PTZ Max Speed:")
-        lbl_speed.setFont(get_label_font(size_pt=8))
-        self.spin_speed = QDoubleSpinBox()
-        self.spin_speed.setRange(2.0, 20.0)
-        self.spin_speed.setValue(8.0)
-        self.spin_speed.setSingleStep(0.5)
-        self.spin_speed.setSuffix(" °/s")
-        self.spin_speed.valueChanged.connect(self.ptz_speed_changed.emit)
+        lbl_pan_spd = QLabel("Pan Speed:")
+        lbl_pan_spd.setFont(get_label_font(size_pt=8))
+        self.spin_pan_speed = QDoubleSpinBox()
+        self.spin_pan_speed.setRange(1.0, 10.0)
+        self.spin_pan_speed.setValue(5.0)
+        self.spin_pan_speed.setSingleStep(0.5)
+        self.spin_pan_speed.setSuffix(" °/s")
+        self.spin_pan_speed.valueChanged.connect(self.pan_speed_changed.emit)
+
+        lbl_tilt_spd = QLabel("Tilt Speed:")
+        lbl_tilt_spd.setFont(get_label_font(size_pt=8))
+        self.spin_tilt_speed = QDoubleSpinBox()
+        self.spin_tilt_speed.setRange(1.0, 10.0)
+        self.spin_tilt_speed.setValue(5.0)
+        self.spin_tilt_speed.setSingleStep(0.5)
+        self.spin_tilt_speed.setSuffix(" °/s")
+        self.spin_tilt_speed.valueChanged.connect(self.tilt_speed_changed.emit)
 
         params_grid.addWidget(lbl_size, 0, 0)
         params_grid.addWidget(self.spin_size, 0, 1)
-        params_grid.addWidget(lbl_speed, 1, 0)
-        params_grid.addWidget(self.spin_speed, 1, 1)
+        params_grid.addWidget(lbl_pan_spd, 1, 0)
+        params_grid.addWidget(self.spin_pan_speed, 1, 1)
+        params_grid.addWidget(lbl_tilt_spd, 2, 0)
+        params_grid.addWidget(self.spin_tilt_speed, 2, 1)
 
         motion_layout.addLayout(params_grid)
         layout.addWidget(motion_frame)
@@ -289,8 +391,8 @@ class ControlPanelWidget(QWidget):
         dist_layout.addLayout(gauss_row)
 
         self.slider_gauss = QSlider(Qt.Horizontal)
-        self.slider_gauss.setRange(5, 50)
-        self.slider_gauss.setValue(int(self.config.gaussian_sigma))
+        self.slider_gauss.setRange(1, 20)   # ISRO hard cap: σ ≤ 20
+        self.slider_gauss.setValue(min(20, int(self.config.gaussian_sigma)))
         self.slider_gauss.valueChanged.connect(self._on_gauss_slider)
         dist_layout.addWidget(self.slider_gauss)
 
@@ -327,8 +429,8 @@ class ControlPanelWidget(QWidget):
         dist_layout.addLayout(jit_mode_row)
 
         self.slider_jitter = QSlider(Qt.Horizontal)
-        self.slider_jitter.setRange(2, 30)
-        self.slider_jitter.setValue(int(self.config.camera_jitter_max_px))
+        self.slider_jitter.setRange(1, 20)   # ISRO hard cap: ≤ ±20px
+        self.slider_jitter.setValue(min(20, int(self.config.camera_jitter_max_px)))
         self.slider_jitter.valueChanged.connect(self._on_jitter_slider)
         dist_layout.addWidget(self.slider_jitter)
 
@@ -345,8 +447,8 @@ class ControlPanelWidget(QWidget):
         dist_layout.addLayout(plat_row)
 
         self.slider_plat = QSlider(Qt.Horizontal)
-        self.slider_plat.setRange(2, 30)
-        self.slider_plat.setValue(int(self.config.platform_motion_max_px))
+        self.slider_plat.setRange(1, 20)   # ISRO hard cap: ≤ ±20px
+        self.slider_plat.setValue(min(20, int(self.config.platform_motion_max_px)))
         self.slider_plat.valueChanged.connect(self._on_plat_slider)
         dist_layout.addWidget(self.slider_plat)
 
@@ -432,6 +534,21 @@ class ControlPanelWidget(QWidget):
         model = self.combo_motion.itemData(index)
         if model is not None:
             self.motion_model_changed.emit(model)
+
+    def _on_fov_changed(self) -> None:
+        self.fov_changed.emit(self.spin_fov_pan.value(), self.spin_fov_tilt.value())
+
+    def _on_shape_changed(self, index: int) -> None:
+        shape = self.combo_shape.itemData(index)
+        if shape is not None:
+            self.target_shape_changed.emit(shape)
+
+    def _on_initpos_changed(self, *_) -> None:
+        mode = self.combo_initpos.currentData()
+        is_custom = (mode == "custom")
+        self.spin_custom_x.setEnabled(is_custom)
+        self.spin_custom_y.setEnabled(is_custom)
+        self.initial_pos_changed.emit(mode, self.spin_custom_x.value(), self.spin_custom_y.value())
 
     def _on_atmo_changed(self, index: int) -> None:
         cond = self.combo_atmo.itemData(index)
