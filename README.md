@@ -130,7 +130,7 @@ SIH2026_ISRO_LinkSight_FSOC_ATP/
 │   └── generate_report_data.py         # Automated multi-scenario test harness
 │
 ├── 📄 PROTOTYPE_DEMO_SCRIPT.txt         # 5-Minute Technical Demonstration Video Script
-└── 📄 TECHNICAL_REPORT.md              # Compact markdown technical specification
+└── 📄 TECHNICAL_REPORT.pdf              # Compact markdown technical specification
 ```
 
 ---
@@ -180,7 +180,7 @@ All five core technical criteria defined in ISRO Problem Statement **PS-26169** 
 
 ## 📄 6. Documentation & Deliverables
 
-* **Technical Report (LaTeX & PDF):** [LinkSight_Technical_Report.tex](logs/LinkSight_Technical_Report.tex)
+* **Technical Report (PDF):** [TECHNICAL_REPORT.pdf](TECHNICAL_REPORT.pdf)
 * **Operational User Manual:** [USER_MANUAL.md](USER_MANUAL.md)
 * **5-Minute Video Walkthrough** 
 
