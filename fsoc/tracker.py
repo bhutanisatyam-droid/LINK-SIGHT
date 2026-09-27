@@ -168,19 +168,34 @@ class KalmanBeaconTracker(BaseTracker):
         return (semi_major, semi_minor, angle_rad)
 
     def update(self, detection: DetectionResult, dt: float) -> TrackEstimate:
-        """Step Kalman filter: Predict -> Validate -> Update (or MicroGRU Coast)."""
+        """Step Kalman filter: Predict -> Validate -> Update (or MicroGRU Coast).
+        
+        Mathematical Pipeline:
+        1. State & Covariance Time Propagation (Constant Velocity kinematic model).
+        2. Dynamic Measurement Noise (R) scaled inversely with optical confidence.
+        3. Innovation Residual & Chi-Squared Mahalanobis Validation Gating.
+        4. State Correction & Joseph-Form Numerically Stable Covariance Update.
+        5. Sleep-Wake MicroGRU Coaster intervention upon sensor occlusion/dropout.
+        """
         dt = max(0.001, min(0.1, dt))
 
-        # 1. Prediction step
+        # ---------------------------------------------------------------------
+        # Step 1: Kinematic State & Covariance Prediction
+        # ---------------------------------------------------------------------
+        # x_pred = F * x
+        # P_pred = F * P * F^T + Q
         F = self._get_transition_matrix(dt)
         Q = self._get_process_noise(dt)
 
         self.x = F @ self.x
         self.P = F @ self.P @ F.T + Q
 
-        # Check for valid measurement
+        # Validate whether optical detector produced a credible detection
         has_detection = detection.detected and detection.confidence >= 0.20
 
+        # ---------------------------------------------------------------------
+        # Step 2: Track State Machine (INITIALIZING vs TRACKING vs DEGRADED)
+        # ---------------------------------------------------------------------
         if self.status == TrackStatus.INITIALIZING:
             if has_detection:
                 self._init_hits += 1
@@ -196,7 +211,7 @@ class KalmanBeaconTracker(BaseTracker):
                     self.ai_gru_active = False
                     self._init_hits = 0
                 else:
-                    # Tentative first hit: do not declare TRACKING yet
+                    # Tentative first hit: remain in INITIALIZING state until confirmed
                     self.status = TrackStatus.INITIALIZING
                     return self._make_estimate(is_valid=False)
             else:
@@ -209,28 +224,35 @@ class KalmanBeaconTracker(BaseTracker):
             if has_detection:
                 z = np.array([[detection.centroid[0]], [detection.centroid[1]]], dtype=np.float64)
 
-                # Dynamic measurement noise scaled by detection confidence
+                # -------------------------------------------------------------
+                # Step 3: Confidence-Scaled Measurement Covariance (R)
+                # -------------------------------------------------------------
+                # When optical SNR is high (confidence -> 1.0), R is small (filter trusts sensor).
+                # When optical SNR is low (confidence -> 0.2), R expands proportionally.
                 meas_std = self.base_meas_std / max(detection.confidence, 0.20)
                 R = np.eye(2, dtype=np.float64) * (meas_std ** 2)
 
-                # Innovation (measurement residual)
+                # Innovation Residual: y = z - H * x_pred
                 y = z - self.H @ self.x
+                # Innovation Covariance: S = H * P_pred * H^T + R
                 S = self.H @ self.P @ self.H.T + R
 
                 try:
                     S_inv = np.linalg.inv(S)
-                    # Mahalanobis distance / Chi-squared gating
+                    # Mahalanobis Distance / Chi-Squared Gate: d^2 = y^T * S^-1 * y
                     mahalanobis_sq = float((y.T @ S_inv @ y).item())
 
-                    # Tiered chi-squared gate or direct optical re-lock:
+                    # Gating Check: Accept measurement if within statistical covariance bounds
                     if mahalanobis_sq < 2500.0:
-                        # Kalman gain
+                        # Optimal Kalman Gain: K = P_pred * H^T * S^-1
                         K = self.P @ self.H.T @ S_inv
 
-                        # State update
+                        # State Update: x_corr = x_pred + K * y
                         self.x = self.x + K @ y
 
-                        # Joseph form covariance update for numerical stability
+                        # Joseph Form Covariance Update:
+                        # P_corr = (I - K*H) * P_pred * (I - K*H)^T + K * R * K^T
+                        # (Guarantees symmetry and positive semi-definiteness even in float64 precision)
                         I_KH = np.eye(4, dtype=np.float64) - K @ self.H
                         self.P = I_KH @ self.P @ I_KH.T + K @ R @ K.T
 
@@ -238,7 +260,7 @@ class KalmanBeaconTracker(BaseTracker):
                         self.consecutive_misses = 0
                         self.track_age_frames += 1
 
-                        # Record clean state history for MicroGRU memory
+                        # Store historical state delta for MicroGRU temporal context ring-buffer
                         pos_x = float(self.x[0, 0])
                         pos_y = float(self.x[1, 0])
                         if self.prev_pos is not None:
@@ -250,7 +272,7 @@ class KalmanBeaconTracker(BaseTracker):
                         self.prev_pos = (pos_x, pos_y)
                         self.ai_gru_active = False
                     elif detection.confidence >= 0.35:
-                        # Direct sub-second optical re-acquisition upon beam restoration
+                        # Fast Direct Re-lock: High confidence target observed after large jump
                         cx, cy = detection.centroid
                         self.x = np.array([[cx], [cy], [0.0], [0.0]], dtype=np.float64)
                         self.P = np.diag([15.0, 15.0, 10000.0, 10000.0]).astype(np.float64)
@@ -260,15 +282,19 @@ class KalmanBeaconTracker(BaseTracker):
                         self.prev_pos = (cx, cy)
                         self.ai_gru_active = False
                     else:
-                        # Gated out: low confidence outlier clutter
+                        # Gated out: Spurious noise outlier
                         self.consecutive_misses += 1
                 except np.linalg.LinAlgError:
                     self.consecutive_misses += 1
             else:
-                # Occlusion / dropout: coast on prediction
+                # Occlusion / beam break dropout: coast on prediction
                 self.consecutive_misses += 1
 
-            # MicroGRU Non-Linear Coasting Intervention
+            # -----------------------------------------------------------------
+            # Step 4: Sleep-Wake MicroGRU Neural Coaster Intervention
+            # -----------------------------------------------------------------
+            # During optical dropouts (clouds/fog/glints), if historical velocity is available,
+            # MicroGRU predicts non-linear trajectory increments (dx, dy) to prevent drift.
             if self.consecutive_misses > 0:
                 if self.gru_session is not None and len(self.state_history) >= 10:
                     # Wake-on-Degradation: MicroGRU active

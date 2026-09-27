@@ -230,15 +230,26 @@ class PTZPIDController:
         if abs(err_px_y) < self.gains.deadband_px:
             err_px_y = 0.0
 
-        # Convert pixel error to angular error in degrees
+        # ---------------------------------------------------------------------
+        # Step 1: Angular Error Computation & Actuator Deadband
+        # ---------------------------------------------------------------------
+        # Convert pixel tracking error to gimbal angular space (degrees):
+        # theta_deg = pixel_error / (pixels_per_degree)
         err_deg_x = err_px_x / self.px_per_deg_x
         err_deg_y = err_px_y / self.px_per_deg_y
 
-        # Proportional term
+        # ---------------------------------------------------------------------
+        # Step 2: Proportional (P) Term
+        # ---------------------------------------------------------------------
+        # Commands gimbal velocity proportional to instantaneous pointing displacement
         p_term_x = self.gains.kp * err_deg_x
         p_term_y = self.gains.kp * err_deg_y
 
-        # Integral term with anti-windup clamping
+        # ---------------------------------------------------------------------
+        # Step 3: Integral (I) Term with Anti-Windup Clamping
+        # ---------------------------------------------------------------------
+        # Eliminates steady-state tracking offset while clamping accumulated error
+        # to prevent integrator windup during high-slew maneuvers or occlusions.
         self.integral_x += err_deg_x * dt
         self.integral_y += err_deg_y * dt
 
@@ -249,11 +260,15 @@ class PTZPIDController:
         i_term_x = self.gains.ki * self.integral_x
         i_term_y = self.gains.ki * self.integral_y
 
-        # Derivative term with first-order low-pass filter
+        # ---------------------------------------------------------------------
+        # Step 4: Filtered Derivative (D) Term (Lead Compensation)
+        # ---------------------------------------------------------------------
+        # First-order low-pass filtered numerical derivative provides damping
+        # without amplifying high-frequency pixel centroid jitter.
         if self.has_prev:
             raw_deriv_x = (err_deg_x - self.prev_error_deg_x) / dt
             raw_deriv_y = (err_deg_y - self.prev_error_deg_y) / dt
-            alpha = 0.70 # LPF smoothing factor
+            alpha = 0.70 # LPF smoothing cutoff factor
             filtered_deriv_x = alpha * raw_deriv_x + (1.0 - alpha) * self.prev_deriv_x
             filtered_deriv_y = alpha * raw_deriv_y + (1.0 - alpha) * self.prev_deriv_y
         else:
@@ -269,7 +284,7 @@ class PTZPIDController:
         d_term_x = self.gains.kd * filtered_deriv_x
         d_term_y = self.gains.kd * filtered_deriv_y
 
-        # Commanded PID rate
+        # Commanded PID rate before DDPG damping and mechanical speed limits
         cmd_x = p_term_x + i_term_x + d_term_x
         cmd_y = p_term_y + i_term_y + d_term_y
 

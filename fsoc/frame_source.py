@@ -419,30 +419,39 @@ class SimulatorFrameSource(BaseFrameSource):
 
         self.update_physics(dt)
 
-        # Camera center in scene coordinates (pixels)
+        # ---------------------------------------------------------------------
+        # Step 1: World-to-Camera Coordinate Transformation
+        # ---------------------------------------------------------------------
+        # Camera center in 2000x2000 arena space (pixels) based on gimbal pan/tilt angles:
+        # X_cam = W/2 + theta_pan * px_per_deg_x
+        # Y_cam = H/2 + theta_tilt * px_per_deg_y
         cam_center_x = self.scene_w / 2.0 + self.pan_deg * self.px_per_deg_x
         cam_center_y = self.scene_h / 2.0 + self.tilt_deg * self.px_per_deg_y
 
-        # Camera viewport corners in scene space
+        # Camera sensor crop bounding box (640x480) in world scene coordinates
         x_min = int(cam_center_x - self.cam_w / 2)
         y_min = int(cam_center_y - self.cam_h / 2)
 
-        # Initialize clean dark space background (12/255 ambient read floor)
+        # Initialize dark sensor background floor (ambient thermal offset)
         frame = np.full((self.cam_h, self.cam_w), 14, dtype=np.uint8)
 
-        # Calculate target position in camera coordinate system (u, v)
+        # Transform target world coordinates (X_tgt, Y_tgt) into camera pixel coordinates (u, v):
+        # u = X_tgt - x_min,   v = Y_tgt - y_min
         u_target = int(self.target_x - x_min)
         v_target = int(self.target_y - y_min)
 
         half_s = self.target_size // 2
 
-        # Check if optical beam is occluded / broken
+        # Check if optical beam is currently occluded by an atmospheric obstacle
         is_occluded = False
         if self.beam_occluded_frames > 0:
             self.beam_occluded_frames -= 1
             is_occluded = True
 
-        # Render optical beacon spot if within (or near) camera FOV and not occluded
+        # ---------------------------------------------------------------------
+        # Step 2: Optical Laser Spot & Gaussian PSF Rendering
+        # ---------------------------------------------------------------------
+        # Render beacon if inside camera Field-of-View and beam is unblocked
         if not is_occluded and (-half_s <= u_target < self.cam_w + half_s and -half_s <= v_target < self.cam_h + half_s):
 
             if self.target_shape == TargetShape.SQUARE:

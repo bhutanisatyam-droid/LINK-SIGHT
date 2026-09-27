@@ -39,7 +39,14 @@ class CutHexagonalSpiralSearch:
         center_deg: Tuple[float, float] = (0.0, 0.0),
         max_radius_deg: float = 3.6,
     ) -> List[Tuple[float, float]]:
-        """Generate ordered hexagonal spiral waypoints in gimbal angular space (degrees)."""
+        """Generate ordered hexagonal spiral waypoints in gimbal angular space (degrees).
+        
+        Mathematical Principle:
+        - Regular hexagonal lattice achieves the optimal 2D circle packing density of pi/(2*sqrt(3)) ≈ 90.69%
+          (compared to square grids which only achieve 78.54%).
+        - Concentric rings expand outward at radius r = k * step_size (k = 1, 2, ...).
+        - Ring k has 6 * k discrete waypoints along the 6 equilateral hexagonal facets.
+        """
         cx, cy = center_deg
         cx = max(-4.5, min(4.5, cx))
         cy = max(-4.5, min(4.5, cy))
@@ -49,12 +56,14 @@ class CutHexagonalSpiralSearch:
         max_rings = max(1, int(math.ceil(max_radius_deg / s)))
 
         for r in range(1, max_rings + 1):
-            # 6 vertices of hexagon at radius r * s
+            # Compute 6 primary vertices of regular hexagon at radial distance (r * s):
+            # V_i = [cx + r*s*cos(60°*i),  cy + r*s*sin(60°*i)] for i in {0..5}
             verts = [
                 (cx + r * s * math.cos(math.radians(60 * i)),
                  cy + r * s * math.sin(math.radians(60 * i)))
                 for i in range(6)
             ]
+            # Interpolate (r) discrete points along each of the 6 hexagonal segments
             for i in range(6):
                 v1 = verts[i]
                 v2 = verts[(i + 1) % 6]
@@ -62,6 +71,7 @@ class CutHexagonalSpiralSearch:
                     px = v1[0] + (k / r) * (v2[0] - v1[0])
                     py = v1[1] + (k / r) * (v2[1] - v1[1])
                     dist = math.hypot(px - cx, py - cy)
+                    # Bound search path within maximum covariance uncertainty radius
                     if dist <= max_radius_deg + 1e-4:
                         if -5.0 <= px <= 5.0 and -5.0 <= py <= 5.0:
                             pts.append((round(px, 3), round(py, 3)))

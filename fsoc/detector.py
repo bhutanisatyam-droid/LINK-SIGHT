@@ -99,11 +99,21 @@ class ClassicalBeaconDetector(BaseDetector):
         pass
 
     def detect(self, frame: np.ndarray) -> DetectionResult:
-        """Execute robust multi-stage detection pipeline with adaptive local background discrimination."""
+        """Execute robust multi-stage detection pipeline with adaptive local background discrimination.
+        
+        Pipeline Execution Stages:
+        1. Pre-filtering: 5x5 spatial median blur for salt-and-pepper shot noise suppression.
+        2. Global noise floor estimation: Image-wide mean and standard deviation.
+        3. Morphological Top-Hat filtering: Strips low-frequency solar gradients and haze pedestals.
+        4. Statistical thresholding: Dynamic CFAR threshold based on Top-Hat noise distribution.
+        5. Connected component filtering: Morphological gating on bounding box, area, and aspect ratio.
+        6. Local annulus contrast discrimination: Signal-to-Clutter Ratio (SCR) against local surround.
+        7. Sub-pixel centroiding: 1st-order spatial intensity moments for sub-pixel accuracy.
+        """
         if frame is None or frame.size == 0:
             return self._null_result
 
-        # Convert to grayscale if BGR
+        # Convert 3-channel BGR video/sensor frames to 8-bit single-channel grayscale
         if len(frame.shape) == 3 and frame.shape[2] == 3:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         else:
@@ -111,33 +121,52 @@ class ClassicalBeaconDetector(BaseDetector):
 
         h_img, w_img = gray.shape[:2]
 
-        # Stage 1: 5x5 Median filtering for impulse & salt-and-pepper noise suppression
+        # -------------------------------------------------------------------------
+        # Stage 1: 5x5 Median Filter (Impulse Noise Suppression)
+        # -------------------------------------------------------------------------
+        # Salt-and-pepper noise generates high-frequency isolated single-pixel spikes
+        # that can spoof simple thresholders. A 5x5 non-linear median filter strips
+        # isolated impulse pixels while preserving compact beacon spot morphology.
         filtered = cv2.medianBlur(gray, 5)
 
-        # Stage 2: Global Raw Background Noise Floor
+        # -------------------------------------------------------------------------
+        # Stage 2: Global Background Statistics & Noise Floor Estimation
+        # -------------------------------------------------------------------------
         raw_mean, raw_std = cv2.meanStdDev(filtered)
         bg_mu = float(raw_mean[0][0])
         bg_sigma = float(raw_std[0][0])
 
-        # Stage 3: Morphological Top-Hat Transform (Strips away low-frequency daytime solar background)
+        # -------------------------------------------------------------------------
+        # Stage 3: Morphological Top-Hat Transform (Daytime Solar Haze Isolation)
+        # -------------------------------------------------------------------------
+        # Top-Hat Transform: T(I) = I - (I ∘ K)
+        # where (I ∘ K) is morphological opening with a rectangular/disk structuring element.
+        # This isolates bright compact structures smaller than the kernel size (21x21 px)
+        # while completely eliminating uniform DC pedestals and non-uniform solar glare.
         tophat = cv2.morphologyEx(filtered, cv2.MORPH_TOPHAT, self.tophat_kernel)
 
-        # Zero-out frame perimeter (18px) to suppress warpAffine translation & jitter edge boundary artifacts
+        # Zero-out frame perimeter (18px) to suppress boundary interpolation artifacts
+        # from camera jitter, vibration warpAffine translations, or sensor margin readout.
         tophat[:18, :] = 0
         tophat[-18:, :] = 0
         tophat[:, :18] = 0
         tophat[:, -18:] = 0
 
-        # Stage 4: Statistical TopHat Noise Floor & Dynamic Threshold
+        # -------------------------------------------------------------------------
+        # Stage 4: Statistical Top-Hat Noise Floor & Dynamic Thresholding
+        # -------------------------------------------------------------------------
         top_mean, top_std = cv2.meanStdDev(tophat)
         t_mu = float(top_mean[0][0])
         t_sigma = float(top_std[0][0])
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(tophat)
 
+        # Constant False Alarm Rate (CFAR) threshold rule:
+        # Threshold scales dynamically with residual background variance: T = max(μ + 2.5σ, 16.0)
         thresh_val = max(t_mu + 2.5 * max(t_sigma, 1.0), 16.0)
         _, thresh = cv2.threshold(tophat, int(thresh_val), 255, cv2.THRESH_BINARY)
 
-        # Stage 5: Contour / Connected Component Extraction
+        # -------------------------------------------------------------------------
+        # Stage 5: Connected Component & Contour Extraction
+        # -------------------------------------------------------------------------
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return self._null_result
@@ -148,7 +177,7 @@ class ClassicalBeaconDetector(BaseDetector):
             if w < 5 or h < 5:
                 continue
 
-            # Reject frame border artifacts
+            # Reject detections on the extreme perimeter
             if x <= 18 or y <= 18 or x + w >= w_img - 18 or y + h >= h_img - 18:
                 continue
 
@@ -156,6 +185,7 @@ class ClassicalBeaconDetector(BaseDetector):
             if bounding_area < 28.0 or bounding_area > self.max_area:
                 continue
 
+            # Aspect ratio check: optical spots must be approximately compact (0.38 <= w/h <= 2.65)
             aspect = float(w) / float(h)
             if aspect < 0.38 or aspect > 2.65:
                 continue
@@ -180,7 +210,13 @@ class ClassicalBeaconDetector(BaseDetector):
             if total_energy < 320.0:
                 continue
 
-            # Stage 6: Local Annulus Background Contrast Discrimination (Signal-to-Clutter Ratio)
+            # ---------------------------------------------------------------------
+            # Stage 6: Local Annulus Background Contrast Discrimination (SCR)
+            # ---------------------------------------------------------------------
+            # To reject bright clutter blobs (clouds, sun glints), we construct a 
+            # local rectangular annulus around the candidate bounding box.
+            # We compute the local mean (local_mu) and standard deviation (local_sigma)
+            # of the surrounding ring, excluding the core beacon pixels.
             pad = 14
             bx1 = max(0, x - pad)
             by1 = max(0, y - pad)
@@ -205,19 +241,25 @@ class ClassicalBeaconDetector(BaseDetector):
             local_contrast = core_mean - local_mu
             global_contrast = core_mean - bg_mu
 
-            # CFAR Dual Contrast Gates (Statistical Grounding):
-            # A true beacon must exceed the global noise floor by >= 3.5 sigma AND exceed local annulus by >= 3.0 sigma
+            # Dual-Gate CFAR Statistical Criteria:
+            # 1. Global Contrast Gate: Must exceed full-frame background by >= 3.5 sigma
+            # 2. Local Contrast Gate: Must exceed local surrounding annulus by >= 3.0 sigma
             min_global_contrast = max(3.5 * bg_sigma, 10.0)
             min_local_contrast = max(3.0 * local_sigma, 8.0)
 
             if global_contrast < min_global_contrast or local_contrast < min_local_contrast:
                 continue
 
-            # Signal-to-Noise Ratio (dB)
+            # Signal-to-Noise Ratio (dB): SNR = 20 * log10(local_contrast / sigma)
             local_snr = local_contrast / max(local_sigma, 1.0)
             snr_db = 20.0 * np.log10(max(local_snr, 1.0))
 
-            # Sub-pixel Centroid using spatial moments of the Top-Hat intensity
+            # ---------------------------------------------------------------------
+            # Stage 7: Sub-Pixel Intensity-Weighted Centroiding
+            # -------------------------------------------------------------------------
+            # Centroid formula using 0th (m00) and 1st order (m10, m01) spatial moments:
+            # cx = x + m10 / m00,   cy = y + m01 / m00
+            # Computed on the Top-Hat transformed intensity map to prevent background bias.
             M = cv2.moments(roi_tophat)
             if M["m00"] > 1e-4:
                 cx = float(x + M["m10"] / M["m00"])
@@ -227,6 +269,7 @@ class ClassicalBeaconDetector(BaseDetector):
                 cy = float(y + h / 2.0)
 
             # Analytical Quality / Confidence Metric [0.0 to 1.0]
+            # Weighted combination of SNR, global contrast ratio, contour solidity, and aspect symmetry
             aspect_sym = 1.0 - min(abs(1.0 - aspect), 0.6)
             confidence = float(
                 0.40 * min(local_snr / 4.0, 1.0)
@@ -236,6 +279,7 @@ class ClassicalBeaconDetector(BaseDetector):
             )
             confidence = max(0.0, min(1.0, confidence))
 
+            # Composite ranking score favoring high total energy flux and peak SNR
             rank_score = total_energy * local_snr * confidence * aspect_sym
             candidates.append(
                 (
