@@ -87,7 +87,6 @@ LinkSight operates on a **dual-tier, sleep-wake architecture** designed for dete
 SIH2026_ISRO_LinkSight_FSOC_ATP/
 ├── 📄 main.py                          # Application entry point (PySide6 GUI)
 ├── 📄 requirements.txt                  # Python dependencies (PySide6, OpenCV, NumPy, ONNXRuntime)
-├── 📄 Launch_LinkSight.bat              # 1-Click launcher script
 ├── 📄 Compile_Executable.bat            # 1-Click PyInstaller build script
 │
 ├── 📁 fsoc/                            # Core Algorithmic Package
@@ -118,8 +117,6 @@ SIH2026_ISRO_LinkSight_FSOC_ATP/
 │   └── test_reacquisition.py           # Cut-hexagonal search lattice geometry & dwell timing
 │
 ├── 📁 logs/                            # Technical Report & Empirical Benchmark Data
-│   ├── LinkSight_Technical_Report.tex  # Complete LaTeX Technical Report Source
-│   ├── LinkSight_FSOC_ATP_Technical_Report.pdf # Compiled Technical Report PDF
 │   ├── SCENARIO1_BASELINE.json         # Scenario 1 empirical benchmark logs
 │   ├── SCENARIO2_FOG.json              # Scenario 2 heavy fog stress-test logs
 │   └── SCENARIO3_RAIN.json             # Scenario 3 dynamic rain & wind shear logs
