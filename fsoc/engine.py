@@ -416,6 +416,26 @@ class TrackingPipeline:
         pan_deg = ground_truth.cam_angles_deg[0] if ground_truth else 0.0
         tilt_deg = ground_truth.cam_angles_deg[1] if ground_truth else 0.0
 
+        # Determine active tracking method at this exact moment
+        if self._rf_coarse_in_progress:
+            tracking_mode = "RF COORDINATES"
+        elif self.reacquisition.is_active:
+            tracking_mode = "SPIRAL SCAN"
+        elif track.status == TrackStatus.TRACKING:
+            if getattr(detection, 'ai_beacon_net_active', False) or getattr(self.controller, 'is_ai_dampener_active', False):
+                tracking_mode = "CNN (AI)"
+            else:
+                tracking_mode = "MATHEMATICS"
+        elif track.status == TrackStatus.DEGRADED:
+            if getattr(track, 'ai_gru_active', False):
+                tracking_mode = "MicroGRU (AI)"
+            else:
+                tracking_mode = "MATHEMATICS"
+        elif track.status == TrackStatus.LOST:
+            tracking_mode = "SPIRAL SCAN" if self.reacquisition.is_active else "SEARCHING"
+        else:
+            tracking_mode = "INITIALIZING"
+
         self.logger.record_step(
             frame_idx=self.frame_index,
             tracking_error_px=err_norm,
@@ -427,6 +447,7 @@ class TrackingPipeline:
             tilt_deg=tilt_deg,
             is_searching=self.reacquisition.is_active,
             is_video_mode=self.frame_source.is_video_mode,
+            tracking_mode=tracking_mode,
         )
 
         snapshot = self.logger.get_snapshot()

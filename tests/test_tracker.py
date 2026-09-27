@@ -32,13 +32,18 @@ class TestKalmanBeaconTracker(unittest.TestCase):
         )
 
     def test_initialization_and_lock(self):
-        det = self._make_detection(330.0, 250.0, conf=0.90)
-        track = self.tracker.update(det, dt=0.033)
+        # Frame 1: Tentative first hit
+        det1 = self._make_detection(330.0, 250.0, conf=0.90)
+        track1 = self.tracker.update(det1, dt=0.033)
+        self.assertEqual(track1.status, TrackStatus.INITIALIZING)
 
-        self.assertEqual(track.status, TrackStatus.TRACKING)
-        self.assertTrue(track.is_valid)
-        self.assertAlmostEqual(track.pos[0], 330.0, delta=1.0)
-        self.assertAlmostEqual(track.pos[1], 250.0, delta=1.0)
+        # Frame 2: Confirmed track (2-hit M-out-of-N confirmation)
+        det2 = self._make_detection(330.0, 250.0, conf=0.90)
+        track2 = self.tracker.update(det2, dt=0.033)
+        self.assertEqual(track2.status, TrackStatus.TRACKING)
+        self.assertTrue(track2.is_valid)
+        self.assertAlmostEqual(track2.pos[0], 330.0, delta=1.0)
+        self.assertAlmostEqual(track2.pos[1], 250.0, delta=1.0)
 
     def test_occlusion_coasting(self):
         """Verify tracker coasts on prediction for brief dropouts without declaring loss."""
@@ -64,11 +69,12 @@ class TestKalmanBeaconTracker(unittest.TestCase):
 
     def test_sustained_loss_transition(self):
         """Verify sustained dropout (>8 frames) transitions track to LOST."""
-        # Acquire
+        # Acquire with 2-hit confirmation
+        self.tracker.update(self._make_detection(320.0, 240.0, conf=0.95), dt=0.033)
         self.tracker.update(self._make_detection(320.0, 240.0, conf=0.95), dt=0.033)
 
-        # Drop for 10 consecutive frames
-        for _ in range(10):
+        # Drop for 15 consecutive frames (exceeding max_coast_frames=8)
+        for _ in range(15):
             track = self.tracker.update(self._make_empty_detection(), dt=0.033)
 
         self.assertEqual(track.status, TrackStatus.LOST)

@@ -41,6 +41,7 @@ def test_phase_2_telemetry_logger():
             tilt_deg=tilt_deg,
             is_searching=False,
             is_video_mode=False,
+            tracking_mode="CNN (AI)" if frame_idx > 5 else "SPIRAL SCAN",
         )
         time.sleep(0.005) # simulate loop dt
 

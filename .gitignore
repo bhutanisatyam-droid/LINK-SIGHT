@@ -19,3 +19,12 @@ ENV/
 .idea/
 .DS_Store
 Thumbs.db
+
+# LaTeX intermediate build files
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk

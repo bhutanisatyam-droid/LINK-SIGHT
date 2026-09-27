@@ -124,7 +124,7 @@ class SimulatorFrameSource(BaseFrameSource):
         self.custom_initial_x = custom_initial_x
         self.custom_initial_y = custom_initial_y
         # RF Link simulation
-        self.rf_link_active: bool = False
+        self.rf_link_active: bool = True
         self.rf_uncertainty_px: float = 80.0  # Gaussian sigma in scene pixels
         self.rf_target_angles_deg: Optional[Tuple[float, float]] = None
 

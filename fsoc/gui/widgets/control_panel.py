@@ -258,16 +258,16 @@ class ControlPanelWidget(QWidget):
         # ── RF SIDE-LINK ──────────────────────────────────────────────────
         rf_top = QHBoxLayout()
         rf_top.setSpacing(4)
-        self.chk_rf = QCheckBox("RF Side-Link (Sim):")
+        self.chk_rf = QCheckBox("RF Coordinate (Sim):")
         self.chk_rf.setToolTip("Simulate auxiliary RF radio ephemeris aiding with angular noise (σ) when optical lock drops")
         self.chk_rf.setFont(get_label_font(size_pt=8, bold=True))
         self.chk_rf.setStyleSheet(f"color: {COLOR_HUD_ACCENT};")
-        self.chk_rf.setChecked(False)
+        self.chk_rf.setChecked(True)
         self.chk_rf.toggled.connect(self._on_rf_changed)
-        self.lbl_rf_val = QLabel("σ=80px (Noise)")
+        self.lbl_rf_val = QLabel("σ=80px (noise)")
         self.lbl_rf_val.setFont(get_mono_font(size_pt=8))
         self.lbl_rf_val.setStyleSheet(f"color: {COLOR_LOCKED};")
-        self.lbl_rf_val.setEnabled(False)
+        self.lbl_rf_val.setEnabled(True)
         rf_top.addWidget(self.chk_rf, 1)
         rf_top.addWidget(self.lbl_rf_val)
         sys_layout.addLayout(rf_top)
@@ -276,7 +276,7 @@ class ControlPanelWidget(QWidget):
         self.slider_rf.setToolTip("RF Ephemeris Uncertainty (1-sigma error basket in pixels)")
         self.slider_rf.setRange(10, 200)
         self.slider_rf.setValue(80)
-        self.slider_rf.setEnabled(False)
+        self.slider_rf.setEnabled(True)
         self.slider_rf.setFixedHeight(16)
         self.slider_rf.valueChanged.connect(self._on_rf_slider)
         sys_layout.addWidget(self.slider_rf)
@@ -548,7 +548,7 @@ class ControlPanelWidget(QWidget):
         self.rf_link_changed.emit(checked, float(self.slider_rf.value()))
 
     def _on_rf_slider(self, val: int) -> None:
-        self.lbl_rf_val.setText(f"σ={val}px")
+        self.lbl_rf_val.setText(f"σ={val}px (noise)")
         self.rf_link_changed.emit(self.chk_rf.isChecked(), float(val))
 
     def _on_atmo_changed(self, index: int) -> None:

@@ -22,7 +22,11 @@ import threading
 import time
 from typing import Deque, List, Optional, Tuple
 
-import numpy as np
+try:
+    import numpy as np
+    _NUMPY_AVAILABLE = True
+except ImportError:
+    _NUMPY_AVAILABLE = False
 
 
 @dataclass
@@ -49,6 +53,7 @@ class TelemetrySnapshot:
     is_locked: bool = False
     is_searching: bool = False
     is_video_mode: bool = False
+    tracking_mode: str = "INITIALIZING"
 
 
 @dataclass
@@ -64,6 +69,7 @@ class LogRecord:
     tilt_deg: float
     loss_count: int
     lock_retention: float
+    tracking_mode: str = "INITIALIZING"
 
 
 @dataclass
@@ -157,6 +163,7 @@ class TelemetryLogger:
         tilt_deg: float,
         is_searching: bool,
         is_video_mode: bool,
+        tracking_mode: str = "INITIALIZING",
     ) -> None:
         """Process tracking loop iteration and update metrics."""
         now = time.perf_counter()
@@ -221,9 +228,17 @@ class TelemetryLogger:
 
             # Error metrics calculation
             self._error_history.append(tracking_error_px)
-            mean_err = float(np.mean(self._error_history)) if self._error_history else 0.0
-            rms_err = float(np.sqrt(np.mean(np.square(self._error_history)))) if self._error_history else 0.0
-            max_err = float(np.max(self._error_history)) if self._error_history else 0.0
+            if _NUMPY_AVAILABLE and len(self._error_history) > 0:
+                mean_err = float(np.mean(self._error_history))
+                rms_err = float(np.sqrt(np.mean(np.square(self._error_history))))
+                max_err = float(np.max(self._error_history))
+            elif len(self._error_history) > 0:
+                n = len(self._error_history)
+                mean_err = sum(self._error_history) / n
+                rms_err = math.sqrt(sum(e * e for e in self._error_history) / n)
+                max_err = max(self._error_history)
+            else:
+                mean_err = rms_err = max_err = 0.0
 
             # Chart buffer encoding: 0 = TRACKING, 1 = DEGRADED, 2 = LOST/SEARCHING
             if status == "TRACKING":
@@ -246,6 +261,7 @@ class TelemetryLogger:
                 tilt_deg=round(tilt_deg, 3),
                 loss_count=self.loss_event_count,
                 lock_retention=round(lock_retention, 2),
+                tracking_mode=tracking_mode,
             )
             self.records.append(record)
 
@@ -269,6 +285,7 @@ class TelemetryLogger:
                 is_locked=is_locked,
                 is_searching=is_searching,
                 is_video_mode=is_video_mode,
+                tracking_mode=tracking_mode,
             )
 
     def get_snapshot(self) -> TelemetrySnapshot:
@@ -295,11 +312,12 @@ class TelemetryLogger:
             os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
             with open(filepath, "w", encoding="utf-8") as f:
                 # Header
-                f.write("time_s,frame,fps,error_px,status,confidence,pan_deg,tilt_deg,loss_count,lock_retention_pct\n")
+                f.write("time_s,frame,fps,error_px,status,confidence,pan_deg,tilt_deg,loss_count,lock_retention_pct,tracking_mode\n")
                 for r in records:
                     f.write(
                         f"{r.time_s:.3f},{r.frame},{r.fps:.1f},{r.error_px:.2f},{r.status},"
-                        f"{r.confidence:.3f},{r.pan_deg:.3f},{r.tilt_deg:.3f},{r.loss_count},{r.lock_retention:.2f}\n"
+                        f"{r.confidence:.3f},{r.pan_deg:.3f},{r.tilt_deg:.3f},{r.loss_count},{r.lock_retention:.2f},"
+                        f"{r.tracking_mode}\n"
                     )
             return True
         except Exception as e:

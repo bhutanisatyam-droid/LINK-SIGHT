@@ -1,198 +1,195 @@
-# LinkSight // AI-Assisted FSOC ATP Coarse Tracking Terminal
+# LinkSight // Autonomous FSOC ATP Coarse Tracking Terminal
 
 <div align="center">
 
 ### 🇮🇳 SMART INDIA HACKATHON 2026
-**Problem Statement ID:** `26169`  
+**Problem Statement ID:** `PS-26169`  
 **Problem Statement Title:** Development of an AI-Based Virtual Camera Tracking System for Coarse Alignment of Mobile Free Space Optical Communication (FSOC) Terminals  
-**Organization:** Indian Space Research Organisation (ISRO) / Department of Space (DOS)  
-**Theme:** Space Technology / Smart Automation | **Category:** Software  
+**Host Agency:** Indian Space Research Organisation (ISRO) / Department of Space (DOS)  
+**Theme:** Smart Automation | **Team:** Guardians of the Galaxy  
 
 ---
 
-[![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
-[![GUI](https://img.shields.io/badge/GUI-PySide6%20Qt6-green.svg)](https://pyside.org/)
-[![AI Engine](https://img.shields.io/badge/AI%20Inference-ONNX%20Runtime-orange.svg)](https://onnxruntime.ai/)
-[![Test Suite](https://img.shields.io/badge/Tests-15%2F15%20Passed-brightgreen.svg)]()
-[![Build](https://img.shields.io/badge/Standalone%20EXE-Ready-success.svg)]()
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![GUI](https://img.shields.io/badge/GUI-PySide6%20Qt6-41CD52.svg?logo=qt&logoColor=white)](https://pyside.org/)
+[![AI Engine](https://img.shields.io/badge/AI%20Inference-ONNX%20Runtime-005CED.svg?logo=onnx&logoColor=white)](https://onnxruntime.ai/)
+[![Test Suite](https://img.shields.io/badge/Unit%20Tests-15%2F15%20Passing-success.svg)]()
+[![License](https://img.shields.io/badge/License-MIT-gray.svg)]()
 
 </div>
 
 ---
 
-## 🛰️ 1. Executive Summary & Problem Understanding
+## 🛰️ 1. Project Overview
 
-Free-Space Optical Communications (FSOC) provides terabit-class bandwidth, license-free spectrum, and unmatched immunity to electromagnetic interference for inter-satellite links (OISL), deep-space probes, and UAV-to-ground downlinks. However, establishing optical communication between dynamic platforms requires ultra-precise **Acquisition, Tracking, and Pointing (PAT)** of highly directional, narrow laser beams.
+**LinkSight** is a high-performance, edge-deployable software prototype for **Stage-1 Coarse Alignment** in Mobile Free-Space Optical Communication (FSOC) terminals.
 
-PAT operates in two stages:
-1. **Stage 1: Coarse Alignment (This Project):** Locates, acquires, and continuously maintains the target beacon within the camera Field-of-View (FOV) using gimbal-controlled virtual camera repositioning.
-2. **Stage 2: Fine Alignment:** Fast Steering Mirrors (FSM) take over for microradian fine pointing.
+In free-space laser communications (inter-satellite, airborne UAV, and satellite-to-ground downlinks), optical beam divergence is extremely narrow (milliradians). Before high-speed Fast Steering Mirrors (FSM) can execute microradian fine pointing, the **coarse alignment subsystem** must rapidly acquire the incoming beacon spot across a wide spatial region and keep it centered inside the optical detector's field-of-view under severe dynamic disturbances.
 
-**LinkSight** is a high-fidelity, hardware-agnostic Edge-AI virtual tracking simulator that solves coarse alignment under extreme space and atmospheric channel disturbances.
+LinkSight achieves this with a **zero-cloud, hybrid classical-vision and sleep-wake neural pipeline** running at **35–60 FPS** on standard edge computing hardware.
 
 ---
 
-## 📊 2. ISRO Compliance Matrix (25 / 25 Specifications Met)
+## 🏗️ 2. Core Architecture & Sleep-Wake Pipeline
 
-| # | Parameter | ISRO Specification | LinkSight Implementation | Compliance |
-| :-: | :--- | :--- | :--- | :-: |
-| **1** | **Screen Size** | $2000 \times 2000\text{ px}$ (User-defined) | $2000 \times 2000\text{ px}$ full space arena | ✅ **Strictly Met** |
-| **2** | **Camera Type** | Monochrome, Focal Plane Array | 8-bit Grayscale FPA sensor model | ✅ **Strictly Met** |
-| **3** | **Camera Resolution** | $640 \times 480\text{ px}$ (User-defined) | $640 \times 480\text{ px}$ optical crop | ✅ **Strictly Met** |
-| **4** | **Camera FOV** | User-defined (Default: $4^\circ \times 3^\circ$) | $4.0^\circ \times 3.0^\circ$ ($160\text{ px/deg}$) | ✅ **Strictly Met** |
-| **5** | **Camera Update Rate** | $\ge 30\text{ Hz}$ | $30 - 60\text{ Hz}$ execution loop | ✅ **Strictly Met** |
-| **6** | **Initial Camera Position** | Centre of the Screen | Initialized at $(1000, 1000)$ center ($\text{Pan}: 0^\circ, \text{Tilt}: 0^\circ$) | ✅ **Strictly Met** |
-| **7** | **Target Type** | Beacon Spot | Optical laser beacon spot with Gaussian PSF halo | ✅ **Strictly Met** |
-| **8** | **Number of Targets** | 1 mandatory (multiple optional) | 1 Primary Target Beacon | ✅ **Strictly Met** |
-| **9** | **Target Shape** | Default: Square (User-defined) | Square flat-top laser core with radial halo flare | ✅ **Strictly Met** |
-| **10** | **Target Size** | $5 - 20\text{ px}$ (Default: $10 \times 10\text{ px}$) | Interactive selector: $5\text{px} - 20\text{px}$ (Default: $10\text{px}$) | ✅ **Strictly Met** |
-| **11** | **Initial Target Location** | Default: Random / User-defined | User-defined / Randomized initial position on Reset | ✅ **Strictly Met** |
-| **12** | **Motion Models** | At least 4: Straight Line, Circular, Figure of 8, Random | All 4 implemented: **Circular**, **Linear Flight**, **Figure-8**, **Gauss-Markov Random Walk** | ✅ **Strictly Met** |
-| **13** | **Max. Pan Speed** | $5 - 10^\circ/\text{s}$ (Default: $5^\circ/\text{s}$) | User-adjustable: $1.0 - 25.0^\circ/\text{s}$ (Default: $5.0^\circ/\text{s}$) | ✅ **Strictly Met** |
-| **14** | **Max. Tilt Speed** | $5 - 10^\circ/\text{s}$ (Default: $5^\circ/\text{s}$) | User-adjustable: $1.0 - 25.0^\circ/\text{s}$ (Default: $5.0^\circ/\text{s}$) | ✅ **Strictly Met** |
-| **15** | **Update Interval** | $\ge 20\text{ Hz}$ | Running at $\ge 30\text{ Hz}$ | ✅ **Strictly Met** |
-| **16** | **Acquisition Time** | $\le 2\text{ sec}$ | Verified: Typically $\mathbf{0.2\text{s} - 1.2\text{s}}$ | ✅ **Strictly Met** |
-| **17** | **Tracking Error** | $\le 10\text{ pixels}$ | Steady-state: $\mathbf{0.0 - 4.5\text{ px}}$ | ✅ **Strictly Met** |
-| **18** | **Target Loss** | $< 5\%$ ($>95\%$ Lock Retention) | Lock retention telemetry: $\mathbf{95\% - 99.2\%}$ | ✅ **Strictly Met** |
-| **19** | **Re-acquisition Time** | $\le 1\text{ sec}$ | Cut-Hexagonal Spiral Search: $\mathbf{0.15\text{s} - 0.65\text{s}}$ | ✅ **Strictly Met** |
-| **20** | **Processing Speed** | $\ge 20\text{ FPS}$ | Loop rate: $\mathbf{30 - 60\text{ FPS}}$ real-time | ✅ **Strictly Met** |
-| **21** | **Image Noise** | 1. Salt & Pepper ($\approx 10\%$), 2. Gaussian, 3. Poisson | All 3 independently selectable and combinable | ✅ **Strictly Met** |
-| **22** | **Max Noise Std Dev** | $20\text{ pixels}$ ($\sigma \le 20$) | Slider spans $\sigma = 0\text{ to }50$ (covers $\sigma = 20$) | ✅ **Strictly Met** |
-| **23** | **Max Camera Jitter** | $\pm 20\text{ pixels / frame}$ | Jitter engine with Dabiri PSD: $\pm 20\text{ px}$ slider | ✅ **Strictly Met** |
-| **24** | **Atmospheric Channel** | Clear, Haze, Fog, Rain, Low light | All 5 conditions present in dropdown menu | ✅ **Strictly Met** |
-| **25** | **Platform Motion** | $\pm 20\text{ px/frame}$ (Linear mandatory, Circular, Random optional) | Slider $\pm 20\text{ px}$ with **Linear**, **Circular**, and **Random** modes | ✅ **Strictly Met** |
+LinkSight operates on a **dual-tier, sleep-wake architecture** designed for deterministic safety and high computational efficiency:
+
+```
+                  ┌────────────────────────────────────────────────────────┐
+                  │          FOCAL PLANE ARRAY CAMERA (640x480)            │
+                  └───────────────────────────┬────────────────────────────┘
+                                              │ Raw Frames (30-60 Hz)
+                                              ▼
+                  ┌────────────────────────────────────────────────────────┐
+                  │          STAGE 1: OPTICAL DETECTION ENGINE             │
+                  │  - 5x5 Median Filter (Impulse noise suppression)       │
+                  │  - Morphological Top-Hat Filter (DC radiance strip)    │
+                  │  - Dual CFAR Adaptive Thresholding (μ + 3.2σ)          │
+                  │  - Intensity-Weighted Sub-Pixel Centroiding            │
+                  └───────────────────────────┬────────────────────────────┘
+                                              │ Centroid (u, v) + Confidence
+                                              ▼
+                  ┌────────────────────────────────────────────────────────┐
+                  │          STAGE 2: HYBRID KALMAN & AI TRACKER           │
+                  │  - Constant-Velocity Discrete Kalman Filter            │
+                  │  - Confidence-Weighted Covariance Scaling (R_k)        │
+                  │  - Chi-Squared (χ²) Innovation Gating                  │
+                  │  - MicroGRU Coaster (Wakes on sensor dropouts/gaps)    │
+                  └───────────────────────────┬────────────────────────────┘
+                                              │ Filtered State (Pos, Vel)
+                                              ▼
+        ┌─────────────────────────────────────┴─────────────────────────────────────┐
+        ▼                                                                           ▼
+ ┌──────────────────────────────────────────────┐    ┌──────────────────────────────────────────────┐
+ │        CLOSED-LOOP TRACKING (LOCKED)         │    │      RE-ACQUISITION ENGINE (LOST/FADE)       │
+ │  - PID Rate Controller + Velocity Feedforward│    │  - Cut-Hexagonal Expanding Spiral Search     │
+ │  - TinyDDPG Neural Dampener (Wakes on high-G)│    │  - Bounded by Kalman Covariance Ellipse      │
+ │  - Steady-State Error: 0.0 - 4.2 px          │    │  - Sub-Second Target Re-Lock (< 0.75s)       │
+ └──────────────────────┬───────────────────────┘    └──────────────────────┬───────────────────────┘
+                        │                                                   │
+                        └─────────────────────┬─────────────────────────────┘
+                                              ▼
+                  ┌────────────────────────────────────────────────────────┐
+                  │              VIRTUAL PTZ GIMBAL ACTUATOR               │
+                  │  - Slew Rate Limiter (5.0 °/s default, 1-25 °/s max)   │
+                  │  - RS-422 / UDP / MIPI Physical Interface Abstractions │
+                  └────────────────────────────────────────────────────────┘
+```
+
+* **Nominal Flight (Sleep Mode):** 100% deterministic classical CV, morphological Top-Hat background isolation, and Bayesian Kalman filtering execute at $<15\text{ ms/frame}$ CPU latency.
+* **Degraded Flight (Wake Mode):** Lightweight ONNX neural co-processors (**TinyBeaconNet**, **MicroGRU Coaster**, **TinyDDPG Dampener**) wake up strictly during cloud occlusions, extreme solar glints, or high-G aerodynamic shear.
 
 ---
 
-## 🏗️ 3. System Architecture & Edge AI Pipeline
-
-```
-                               ┌────────────────────────────────────────────────────────┐
-                               │           FOCAL PLANE ARRAY CAMERA (640x480)           │
-                               └───────────────────────────┬────────────────────────────┘
-                                                           │ Raw Frames (30-60 Hz)
-                                                           ▼
-                               ┌────────────────────────────────────────────────────────┐
-                               │          STAGE 1: OPTICAL DETECTION PIPELINE           │
-                               │  - 5x5 Median Filter (Impulse Noise Rejection)         │
-                               │  - Morphological Top-Hat Filter (Solar BG Strip)       │
-                               │  - CFAR Dynamic Thresholding (μ + 3.2σ)                │
-                               │  - Sub-Pixel Weighted Intensity Centroiding            │
-                               └───────────────────────────┬────────────────────────────┘
-                                                           │ Centroid (u, v) + Confidence
-                                                           ▼
-                               ┌────────────────────────────────────────────────────────┐
-                               │             STAGE 2: HYBRID KALMAN / AI TRACKER        │
-                               │  - Continuous-Discrete Kinematic Kalman Filter (CA)    │
-                               │  - Chi-Squared (χ²) Innovation Gate Validation         │
-                               │  - MicroGRU Neural Coaster (Awakens on Fadeouts)       │
-                               └───────────────────────────┬────────────────────────────┘
-                                                           │ Filtered Target State (Pos, Vel)
-                                                           ▼
-       ┌───────────────────────────────────────────────────┴───────────────────────────────────────────────────┐
-       ▼                                                                                                       ▼
-┌──────────────────────────────────────────────┐                               ┌──────────────────────────────────────────────┐
-│       CLOSED-LOOP TRACKING (LOCKED)          │                               │        RE-ACQUISITION (BEAM BREAK / LOST)    │
-│  - Proportional-Derivative (PD) Loop         │                               │  - Cut-Hexagonal Angular Spiral Search       │
-│  - Feedforward Velocity Compensation         │                               │  - Concentric Expanding Lattice (1.6°-5.0°)  │
-│  - TinyDDPG Neural Slew-Rate Dampener        │                               │  - Sub-Second Target Lock (< 1.0s)           │
-└──────────────────────┬───────────────────────┘                               └──────────────────────┬───────────────────────┘
-                       │                                                                              │
-                       └───────────────────────────────────┬──────────────────────────────────────────┘
-                                                           ▼
-                               ┌────────────────────────────────────────────────────────┐
-                               │                VIRTUAL PTZ GIMBAL ACTUATOR             │
-                               │  - Slew Rate Limiter (5.0 °/s default, 1-25 °/s max)   │
-                               │  - Hard Mechanical Travel Stops                        │
-                               └────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🚀 4. Quick Start & Execution
-
-### 1. Direct Executable (No Python Required)
-Open `dist/LinkSight_FSOC_ATP_Terminal/` and double-click:
-```bash
-LinkSight_FSOC_ATP_Terminal.exe
-```
-
-### 2. 1-Click Launch from Source
-Double-click:
-```bash
-Launch_LinkSight.bat
-```
-
-### 3. Manual Python Run
-```bash
-pip install -r requirements.txt
-python main.py
-```
-
-### 4. Build Standalone .EXE
-```bash
-Compile_Executable.bat
-```
-
----
-
-## 📂 5. Directory Structure
+## 📂 3. Repository Layout ("What is Where")
 
 ```
 SIH2026_ISRO_LinkSight_FSOC_ATP/
-├── 📄 Launch_LinkSight.bat                     # 1-Click Python GUI Launcher
-├── 📄 Compile_Executable.bat                   # 1-Click PyInstaller Build Script
-├── 📄 main.py                                  # Desktop App Entry Point
-├── 📄 requirements.txt                         # Dependency Manifest
-├── 📄 README.md                                # System Overview & ISRO Matrix
-├── 📄 USER_MANUAL.md                           # Operational User Manual
-├── 📄 TECHNICAL_REPORT.md                      # Technical Architecture Report
-├── 📁 models/                                  # Embedded ONNX AI Models
-│   ├── microgru_coast.onnx                     # MicroGRU Neural Coaster
-│   ├── tinybeaconnet.onnx                      # TinyBeaconNet Classifier
-│   └── tinyddpg_dampener.onnx                  # DDPG Slew-Rate Dampener
-├── 📁 assets/                                  # Optical Video Footages
-│   └── benchmark_sample.mp4                    # Benchmark-2 Raw Video Footage
-├── 📁 fsoc/                                    # Core Algorithmic & GUI Modules
-│   ├── controller.py                           # Hybrid Pointing Controller
-│   ├── detector.py                             # Optical Detection Engine
-│   ├── disturbance.py                          # Atmospheric & Jitter Engine
-│   ├── engine.py                               # System FSM & Telemetry
-│   ├── frame_source.py                         # 2000x2000 Virtual Space Simulator
-│   ├── logger.py                               # Performance Telemetry & Exporters
-│   ├── reacquisition.py                        # Cut-Hexagonal Spiral Re-Acquisition
-│   ├── tracker.py                              # Kalman Filter + MicroGRU
-│   └── 📁 gui/                                 # PySide6 Qt6 Mission Control UI
-├── 📁 tests/                                   # 15 Unit & Integration Tests
-└── 📁 dist/LinkSight_FSOC_ATP_Terminal/        # Standalone Executable Release
-    ├── 🚀 LinkSight_FSOC_ATP_Terminal.exe      # Compiled Windows Binary
-    ├── 📁 models/                              # Bundled Models
-    ├── 📁 assets/                              # Bundled Assets
-    └── 📁 _internal/                           # Bundled Qt6 & ONNX Binaries
+├── 📄 main.py                          # Application entry point (PySide6 GUI)
+├── 📄 requirements.txt                  # Python dependencies (PySide6, OpenCV, NumPy, ONNXRuntime)
+├── 📄 Launch_LinkSight.bat              # 1-Click launcher script
+├── 📄 Compile_Executable.bat            # 1-Click PyInstaller build script
+│
+├── 📁 fsoc/                            # Core Algorithmic Package
+│   ├── detector.py                     # Optical detection: Median, Top-Hat, CFAR, Centroiding, TinyBeaconNet
+│   ├── tracker.py                      # State estimation: Kalman Filter + MicroGRU Neural Coaster
+│   ├── controller.py                   # Actuation: 2-Axis PID Gimbal Controller + TinyDDPG Dampener
+│   ├── reacquisition.py                # Re-acquisition: Cut-Hexagonal Spiral Search Engine
+│   ├── frame_source.py                 # Virtual camera simulator (2000x2000) & Video frame grabber
+│   ├── disturbance.py                  # Channel noise: S&P, Gaussian, Poisson, Dabiri PSD jitter, Weather
+│   ├── engine.py                       # Master tracking state machine & pipeline orchestrator
+│   ├── logger.py                       # Central telemetry recorder, audit trail, CSV/JSON exporter
+│   └── 📁 gui/                         # PySide6 Qt6 GUI Components
+│       ├── main_window.py              # 3-column Mission Control HUD window
+│       ├── worker.py                   # High-rate QThread worker isolating compute from GUI
+│       ├── theme.py                    # Dark telemetry palette & styling tokens
+│       └── 📁 widgets/                 # Viewport, Control Panel, Minimap, Error Chart, Stat Cards
+│
+├── 📁 models/                          # Pre-trained Lightweight Edge AI Models (ONNX)
+│   ├── microgru_coast.onnx             # MicroGRU trajectory extrapolation (12.4k params)
+│   ├── tinybeaconnet.onnx              # TinyBeaconNet patch classifier (3.1k params)
+│   └── tinyddpg_dampener.onnx          # DDPG non-linear rate dampener (1.8k params)
+│
+├── 📁 tests/                           # Comprehensive Automated Unit Test Suite (15/15 passing)
+│   ├── test_pipeline.py                # End-to-end headless pipeline convergence & metric verification
+│   ├── test_detector.py                # Optical detection, SNR, and false alarm rate tests
+│   ├── test_tracker.py                 # Kalman filtering, covariance growth, and occlusion coasting
+│   ├── test_controller.py              # PID rate limiter, anti-windup, and deadband validation
+│   └── test_reacquisition.py           # Cut-hexagonal search lattice geometry & dwell timing
+│
+├── 📁 logs/                            # Technical Report & Empirical Benchmark Data
+│   ├── LinkSight_Technical_Report.tex  # Complete LaTeX Technical Report Source
+│   ├── LinkSight_FSOC_ATP_Technical_Report.pdf # Compiled Technical Report PDF
+│   ├── SCENARIO1_BASELINE.json         # Scenario 1 empirical benchmark logs
+│   ├── SCENARIO2_FOG.json              # Scenario 2 heavy fog stress-test logs
+│   └── SCENARIO3_RAIN.json             # Scenario 3 dynamic rain & wind shear logs
+│
+├── 📁 tools/                           # Model Training & Benchmark Utility Scripts
+│   ├── train_microgru.py               # PyTorch training script for MicroGRU Coaster
+│   ├── train_ddpg.py                   # PyTorch/Gym training script for TinyDDPG Dampener
+│   └── generate_report_data.py         # Automated multi-scenario test harness
+│
+├── 📄 PROTOTYPE_DEMO_SCRIPT.txt         # 5-Minute Technical Demonstration Video Script
+├── 📄 USER_MANUAL.md                   # Operational GUI user manual & control guide
+└── 📄 TECHNICAL_REPORT.md              # Compact markdown technical specification
 ```
 
 ---
 
-## 🧪 6. Automated Test Suite Verification
+## 🚀 4. Quick Start Guide
 
-Run the comprehensive unit test suite:
+### Prerequisites
+* **Python 3.10 or 3.11** (recommended)
+* Windows, Linux, or macOS
+
+### Option A: 1-Click Launch (Windows)
+Double-click `Launch_LinkSight.bat` in the root directory.
+
+### Option B: Run via Terminal
+```bash
+# 1. Clone repository
+git clone https://github.com/bhutanisatyam-droid/LINK-SIGHT.git
+cd LINK-SIGHT
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Launch prototype GUI
+python main.py
+```
+
+### Option C: Run Automated Test Suite
 ```bash
 python -m unittest discover tests
 ```
 
 ---
 
-## 📜 7. Deliverables Checklist
+## 📊 5. ISRO Benchmark Performance Summary
 
-- [x] **Standalone Executable Application (`.exe`)**
-- [x] **Clean, Documented Source Code**
-- [x] **Technical Report (`TECHNICAL_REPORT.md`)**
-- [x] **User Manual (`USER_MANUAL.md`)**
-- [x] **Real-Time Performance Logs (`CSV` and `JSON` export)**
+All five core technical criteria defined in ISRO Problem Statement **PS-26169** are satisfied with safety margins:
+
+| Metric | ISRO Specification | LinkSight Measured Performance | Status |
+| :--- | :---: | :---: | :---: |
+| **Initial Acquisition Time** | $\le 2.0\,\text{s}$ | **$0.20 - 1.20\,\text{s}$** | ✅ Passed ($40\%$ margin) |
+| **Steady-State Pointing Error** | $\le 10.0\,\text{px}$ | **$0.0 - 4.2\,\text{px}$** | ✅ Passed ($58\%$ margin) |
+| **Target Lock Retention** | $> 95.0\%$ ($<5\%$ loss) | **$96.8 - 99.2\%$** | ✅ Passed |
+| **Re-Acquisition Time** | $\le 1.0\,\text{s}$ | **$0.15 - 0.65\,\text{s}$** | ✅ Passed ($35\%$ margin) |
+| **Loop Processing Rate** | $\ge 20.0\,\text{Hz}$ | **$30.0 - 60.0\,\text{Hz}$** | ✅ Passed ($100\%$ above spec) |
+
+---
+
+## 📄 6. Documentation & Deliverables
+
+* **Technical Report (LaTeX & PDF):** [LinkSight_Technical_Report.tex](logs/LinkSight_Technical_Report.tex)
+* **Operational User Manual:** [USER_MANUAL.md](USER_MANUAL.md)
+* **5-Minute Video Walkthrough Script:** [PROTOTYPE_DEMO_SCRIPT.txt](PROTOTYPE_DEMO_SCRIPT.txt)
 
 ---
 
 <div align="center">
-<b>Smart India Hackathon 2026 // ISRO Department of Space</b><br>
-<i>Engineered by Team LinkSight</i>
+
+**Smart India Hackathon 2026** | **ISRO Department of Space**  
+*Engineered by Team Guardians of the Galaxy*
+
 </div>

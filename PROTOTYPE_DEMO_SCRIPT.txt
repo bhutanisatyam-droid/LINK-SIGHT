@@ -1,0 +1,119 @@
+================================================================================
+LINKSIGHT FSOC ATP TERMINAL - PROTOTYPE DEMONSTRATION VIDEO SCRIPT
+ISRO Problem Statement PS-26169 | Smart India Hackathon 2026
+Duration: ~5 Minutes
+================================================================================
+
+[0:00 – 0:45] SECTION 1: INTERFACE & LAYOUT OVERVIEW
+--------------------------------------------------------------------------------
+(On-Screen Action: Move cursor across the three main interface columns)
+
+"This is the LinkSight ATP terminal prototype. The interface is organized 
+into three main operational panels:
+
+On the left, we have the Control Panel, which allows configuring camera Field 
+of View, target trajectory models, environmental disturbance generators, 
+and execution modes.
+
+In the center, the Primary HUD Viewport renders the 640 by 480 sensor feed 
+with target bounding reticles and sub-pixel centroids, along with a rolling 
+Tracking Error Chart right below it.
+
+On the right, the 2D Arena Minimap displays the full 2000 by 2000 pixel world 
+arena, optical coverage basket, and true target trajectory, alongside live 
+Telemetry and Performance Cards recording frame rates, error metrics, and 
+system event logs."
+
+
+[0:45 – 1:40] SECTION 2: BASIC EXECUTION & CLOSED-LOOP TRACKING
+--------------------------------------------------------------------------------
+(On-Screen Action: Click the "RUN" button. Show the green target reticle and 
+the error chart stabilizing below 2 pixels)
+
+"Clicking RUN starts the real-time pipeline at 35 frames per second.
+
+On the center viewport, the green reticle indicates that the system has 
+acquired the optical beacon. The detector pipeline executes 5 stages on every 
+single frame: spatial median filtering, morphological top-hat filtering to 
+remove DC background radiance, dual CFAR adaptive thresholding, and 
+intensity-weighted centroiding.
+
+The extracted centroid is fed into a 4-state constant-velocity Kalman filter. 
+The filter estimates position and velocity, and commands the PTZ gimbal 
+controller to center the beacon.
+
+Looking at the error graph below, the steady-state tracking error stabilizes 
+between 1 and 2 pixels, well below the mandatory 10-pixel threshold."
+
+
+[1:40 – 2:35] SECTION 3: DISTURBANCE INJECTION & FILTER RESILIENCE
+--------------------------------------------------------------------------------
+(On-Screen Action: In the left panel, drag Salt & Pepper noise to 20%, 
+increase Gaussian Dark Noise to 15, and set Atmospheric Condition to Dense Fog)
+
+"Next, we test system resilience using the disturbance generator in the left panel.
+
+We can inject up to 30% Salt and Pepper impulse noise, additive Gaussian dark 
+current noise, and mechanical platform jitter.
+
+Under Atmospheric Settings, switching the profile to Dense Fog applies a 
+Koschmieder optical transmissivity drop down to 0.35, significantly attenuating 
+the beacon intensity.
+
+As seen on the video feed and telemetry cards, the tracking status remains 
+LOCKED. The dual-window CFAR dynamically recalibrates its threshold against 
+local and global background levels, while the Chi-squared innovation gate 
+filters out false clutter returns."
+
+
+[2:35 – 3:30] SECTION 4: BEAM OCCLUSION & CUT-HEXAGONAL RE-ACQUISITION
+--------------------------------------------------------------------------------
+(On-Screen Action: Click the "OCCLUDE BEAM (18 Frames)" button)
+
+"Now we demonstrate target loss and recovery by clicking OCCLUDE BEAM.
+
+When optical line-of-sight is blocked, the detector confidence drops below 
+threshold and the state transitions to LOST.
+
+This automatically activates the Cut-Hexagonal Re-Acquisition Engine. As 
+visible on the 2D Minimap, the gimbal executes expanding concentric hexagonal 
+rings around the last known Kalman position, providing 90.7% area coverage 
+efficiency.
+
+As soon as the beacon re-enters the field of view, the detector locks back on 
+in approximately 0.6 seconds and hands control back to the nominal tracking loop.
+
+During recovery, lightweight Sleep-Wake AI models (MicroGRU and TinyDDPG) 
+execute on-demand to damp slew-rate oscillations before returning to zero CPU load."
+
+
+[3:30 – 4:20] SECTION 5: TRAJECTORIES, RF COORDINATES & MOTION SETTINGS
+--------------------------------------------------------------------------------
+(On-Screen Action: Open Trajectory dropdown, show Initial Position options, 
+and adjust the RF Coordinate slider)
+
+"Under the ISRO System Parameters section, we can configure:
+
+- Trajectory models: Circular orbit, Figure-8 Lissajous, or Brownian random walk.
+- Initial position modes: Center, Random arena placement, or Custom X and Y coordinates.
+- Gimbal slew rates: Pan and tilt speed limits up to 10 degrees per second.
+- The RF Coordinate Simulation toggle, enabled by default, provides an 
+  auxiliary coarse pointing vector with configurable 1-sigma uncertainty noise 
+  (from 10 to 200 pixels) to guide initial acquisition."
+
+
+[4:20 – 5:00] SECTION 6: VIDEO FILE MODE & TELEMETRY AUDIT EXPORT
+--------------------------------------------------------------------------------
+(On-Screen Action: Switch input source to Video File mode, then click 
+"EXPORT SESSION LOG (CSV/JSON)")
+
+"In addition to the synthetic simulation engine, selecting Pre-Recorded Video 
+Mode allows loading external optical bench video files, confirming the computer 
+vision detector works directly on raw camera footage.
+
+At the conclusion of a session, clicking EXPORT SESSION LOG writes a full 
+performance audit to CSV and JSON formats, logging simulation duration, 
+average FPS, acquisition latency, RMS tracking error, and link retention percentage.
+
+This concludes the demonstration of the LinkSight FSOC ATP Terminal prototype."
+================================================================================
