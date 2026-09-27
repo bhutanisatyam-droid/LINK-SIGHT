@@ -81,7 +81,7 @@ LinkSight operates on a **dual-tier, sleep-wake architecture** designed for dete
 
 ---
 
-## 📂 3. Repository Layout ("What is Where")
+## 📂 3. Repository Layout 
 
 ```
 SIH2026_ISRO_LinkSight_FSOC_ATP/
